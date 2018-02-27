@@ -1,3 +1,6 @@
+# About: 
+Assignments for [Deep learning class](https://github.com/ufal/npfl114).
+
 # Deep Learning Labs
 
 The tasks are evaluated automatically using the [ReCodEx Code
