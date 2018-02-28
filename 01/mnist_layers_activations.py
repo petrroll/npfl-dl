@@ -11,8 +11,11 @@ class Network:
         # Create an empty graph and a session
         graph = tf.Graph()
         graph.seed = seed
-        self.session = tf.Session(graph = graph, config=tf.ConfigProto(inter_op_parallelism_threads=threads,
-                                                                       intra_op_parallelism_threads=threads))
+        self.session = tf.Session(
+            graph = graph, 
+            config=tf.ConfigProto(
+                inter_op_parallelism_threads=threads,intra_op_parallelism_threads=threads)
+                )
 
     def construct(self, args):
         with self.session.graph.as_default():
@@ -22,10 +25,12 @@ class Network:
 
             # Computation
             flattened_images = tf.layers.flatten(self.images, name="flatten")
-            # TODO: add args.layers hidden layers with activations given by
-            # args.activation and store results in hidden_layer. Possible
-            # activations are none, relu, tanh and sigmoid.
-            output_layer = tf.layers.dense(hidden_layer, self.LABELS, activation=None, name="output_layer")
+            last_layer = flattened_images
+
+            for i in range(args.layers):
+                last_layer = tf.layers.dense(last_layer, args.hidden_layer, activation=args.activation, name=("hidden_layer" + str(i)))
+
+            output_layer = tf.layers.dense(last_layer, self.LABELS, activation=None, name="output_layer")
             self.predictions = tf.argmax(output_layer, axis=1)
 
             # Training
@@ -38,7 +43,7 @@ class Network:
             confusion_matrix = tf.reshape(tf.confusion_matrix(self.labels, self.predictions,
                                                               weights=tf.not_equal(self.labels, self.predictions), dtype=tf.float32),
                                           [1, self.LABELS, self.LABELS, 1])
-
+            self.accuracy = accuracy
             summary_writer = tf.contrib.summary.create_file_writer(args.logdir, flush_millis=10 * 1000)
             self.summaries = {}
             with summary_writer.as_default(), tf.contrib.summary.record_summaries_every_n_global_steps(100):
@@ -47,18 +52,18 @@ class Network:
             with summary_writer.as_default(), tf.contrib.summary.always_record_summaries():
                 for dataset in ["dev", "test"]:
                     self.summaries[dataset] = [tf.contrib.summary.scalar(dataset + "/accuracy", accuracy),
-                                               tf.contrib.summary.image(dataset + "/confusion_matrix", confusion_matrix)]
-
+                                               tf.contrib.summary.image(dataset + "/confusion_matrix", confusion_matrix),
+                                               ]
             # Initialize variables
             self.session.run(tf.global_variables_initializer())
             with summary_writer.as_default():
                 tf.contrib.summary.initialize(session=self.session, graph=self.session.graph)
 
     def train(self, images, labels):
-        self.session.run([self.training, self.summaries["train"]], {self.images: images, self.labels: labels})
+       self.session.run([self.training, self.summaries["train"]], {self.images: images, self.labels: labels})
 
     def evaluate(self, dataset, images, labels):
-        self.session.run(self.summaries[dataset], {self.images: images, self.labels: labels})
+        return self.session.run({"sum" : self.summaries[dataset], "acc" : self.accuracy}, {self.images: images, self.labels: labels})["acc"]
 
 
 if __name__ == "__main__":
@@ -78,6 +83,13 @@ if __name__ == "__main__":
     parser.add_argument("--layers", default=1, type=int, help="Number of layers.")
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
     args = parser.parse_args()
+
+    args.activation = {
+        "relu": tf.nn.relu,
+        "tanh" : tf.nn.tanh,
+        "sigmoid" : tf.nn.sigmoid,
+        "none" : None,
+    }[args.activation]
 
     # Create logdir name
     args.logdir = "logs/{}-{}-{}".format(
@@ -108,7 +120,6 @@ if __name__ == "__main__":
             network.train(images, labels)
 
         network.evaluate("dev", mnist.validation.images, mnist.validation.labels)
-    network.evaluate("test", mnist.test.images, mnist.test.labels)
-
-    # TODO: Compute and print accuracy on the test set. Print accuracy as
-    # percentage rounded on two decimal places, i.e., 91.23
+        
+    final_accuracy = network.evaluate("test", mnist.test.images, mnist.test.labels)
+    print("{:.2f}".format(final_accuracy*100))
