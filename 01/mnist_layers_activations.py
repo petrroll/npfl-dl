@@ -28,7 +28,16 @@ class Network:
             last_layer = flattened_images
 
             for i in range(args.layers):
-                last_layer = tf.layers.dense(last_layer, args.hidden_layer, activation=args.activation, name=("hidden_layer" + str(i)))
+                last_layer = tf.layers.dense(
+                    last_layer, args.hidden_layer, 
+                    activation={
+                        "relu": tf.nn.relu,
+                        "tanh" : tf.nn.tanh,
+                        "sigmoid" : tf.nn.sigmoid,
+                         "none" : None,
+                        }[args.activation], 
+                    name=("hidden_layer" + str(i))
+                    )
 
             output_layer = tf.layers.dense(last_layer, self.LABELS, activation=None, name="output_layer")
             self.predictions = tf.argmax(output_layer, axis=1)
@@ -83,13 +92,6 @@ if __name__ == "__main__":
     parser.add_argument("--layers", default=1, type=int, help="Number of layers.")
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
     args = parser.parse_args()
-
-    args.activation = {
-        "relu": tf.nn.relu,
-        "tanh" : tf.nn.tanh,
-        "sigmoid" : tf.nn.sigmoid,
-        "none" : None,
-    }[args.activation]
 
     # Create logdir name
     args.logdir = "logs/{}-{}-{}".format(
