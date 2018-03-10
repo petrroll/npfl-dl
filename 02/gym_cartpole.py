@@ -18,7 +18,22 @@ class Network:
             self.observations = tf.placeholder(tf.float32, [None, self.OBSERVATIONS], name="observations")
             self.labels = tf.placeholder(tf.int64, [None], name="labels")
 
-            # TODO: Define the model, with the output layers for actions in `output_layer`
+            last_layer = self.observations
+
+
+            for i in range(args.layers):
+                last_layer = tf.layers.dense(
+                    last_layer, args.hidden_layer, 
+                    activation={
+                        "relu": tf.nn.relu,
+                        "tanh" : tf.nn.tanh,
+                        "sigmoid" : tf.nn.sigmoid,
+                        "none" : None,
+                        }[args.activation], 
+                    name=("hidden_layer" + str(i))
+                )
+
+            output_layer = tf.layers.dense(last_layer, self.ACTIONS, name="output_layer")
 
             self.actions = tf.argmax(output_layer, axis=1, name="actions")
 
@@ -30,9 +45,11 @@ class Network:
             # Summaries
             accuracy = tf.reduce_mean(tf.cast(tf.equal(self.labels, self.actions), tf.float32))
             summary_writer = tf.contrib.summary.create_file_writer(args.logdir, flush_millis=10 * 1000)
-            with summary_writer.as_default(), tf.contrib.summary.record_summaries_every_n_global_steps(100):
+            with summary_writer.as_default(), tf.contrib.summary.always_record_summaries():
                 self.summaries = [tf.contrib.summary.scalar("train/loss", loss),
                                   tf.contrib.summary.scalar("train/accuracy", accuracy)]
+
+            self.accuracy = accuracy
 
             # Construct the saver
             tf.add_to_collection("end_points/observations", self.observations)
@@ -45,7 +62,7 @@ class Network:
                 tf.contrib.summary.initialize(session=self.session, graph=self.session.graph)
 
     def train(self, observations, labels):
-        self.session.run([self.training, self.summaries], {self.observations: observations, self.labels: labels})
+        return self.session.run([self.training, self.summaries, self.accuracy], {self.observations: observations, self.labels: labels})[2]
 
     def save(self, path):
         self.saver.save(self.session, path)
@@ -62,8 +79,13 @@ if __name__ == "__main__":
 
     # Parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--epochs", default=20, type=int, help="Number of epochs.")
+    parser.add_argument("--batches", default=6, type=int, help="Number of batches.")
+    parser.add_argument("--epochs", default=500, type=int, help="Number of epochs.")
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
+    parser.add_argument("--hidden_layer", default=5, type=int, help="Size of the hidden layer.")
+    parser.add_argument("--layers", default=1, type=int, help="Number of layers.")
+    parser.add_argument("--activation", default="tanh", type=str, help="Activation function.")
+
     args = parser.parse_args()
 
     # Create logdir name
@@ -87,9 +109,20 @@ if __name__ == "__main__":
     network = Network(threads=args.threads)
     network.construct(args)
 
+    data_size = len(observations)
+    batch_size = int(data_size // args.batches)
     # Train
     for i in range(args.epochs):
-        # TODO: Train for an epoch
+        perm = np.random.permutation(data_size)
+        
+        rand_obs = observations[perm]
+        rand_labels = labels[perm]
+
+        for j in range(data_size // batch_size):
+            acc = network.train(
+                rand_obs[j*batch_size:(j+1)*batch_size], 
+                rand_labels[j*batch_size:(j+1)*batch_size]
+                )
 
     # Save the network
     network.save("gym_cartpole/model")
