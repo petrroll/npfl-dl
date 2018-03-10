@@ -14,7 +14,7 @@ class Network:
         self.session = tf.Session(graph = graph, config=tf.ConfigProto(inter_op_parallelism_threads=threads,
                                                                        intra_op_parallelism_threads=threads))
 
-    def construct(self, args):
+    def construct(self, args, batches_per_epoch):
         with self.session.graph.as_default():
             # Inputs
             self.images = tf.placeholder(tf.float32, [None, self.WIDTH, self.HEIGHT, 1], name="images")
@@ -33,13 +33,14 @@ class Network:
             learning_rate = tf.constant(args.learning_rate) if args.decay_rate == None else tf.train.exponential_decay(
                 args.learning_rate,
                 global_step,
-                1,
-                args.decay_rate
+                batches_per_epoch,
+                args.decay_rate,
+                staircase=True,
             )
 
             optimizer = {
-                "SGD" : tf.train.GradientDescentOptimizer(args.learning_rate),
-                "SGD_momentum" : tf.train.MomentumOptimizer(args.learning_rate, args.momentum),
+                "SGD" : tf.train.GradientDescentOptimizer(learning_rate),
+                "SGD_momentum" : tf.train.MomentumOptimizer(learning_rate, args.momentum),
                 "Adam" : tf.train.AdamOptimizer(learning_rate)
             }[args.optimizer_processed]
 
@@ -75,6 +76,7 @@ if __name__ == "__main__":
     import datetime
     import os
     import re
+    import sys
 
     # Fix random seed
     np.random.seed(42)
@@ -119,14 +121,13 @@ if __name__ == "__main__":
     # is part of expected output when evaluating on ReCodEx.
     mnist = mnist.input_data.read_data_sets(".", reshape=False, seed=42)
     batches_per_epoch = mnist.train.num_examples // args.batch_size
-    batches_in_total = batches_per_epoch * args.epochs
 
     if args.learning_rate_final != None:
-        args.decay_rate = (args.learning_rate_final / args.learning_rate) ** (1/batches_in_total)
+        args.decay_rate = (args.learning_rate_final / args.learning_rate) ** (1/(args.epochs - 1))
 
     # Construct the network
     network = Network(threads=args.threads)
-    network.construct(args)
+    network.construct(args, batches_per_epoch)
 
     # Train
     for i in range(args.epochs):
