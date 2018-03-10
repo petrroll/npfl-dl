@@ -30,17 +30,30 @@ class Network:
             loss = tf.losses.sparse_softmax_cross_entropy(self.labels, output_layer, scope="loss")
             global_step = tf.train.create_global_step()
 
-            # TODO: Create `optimizer` according to arguments ("SGD", "SGD" with momentum, or "Adam"),
-            # utilizing specified learning rate according to args.learning_rate and args.learning_rate_final.
+            learning_rate = tf.constant(args.learning_rate) if args.decay_rate == None else tf.train.exponential_decay(
+                args.learning_rate,
+                global_step,
+                1,
+                args.decay_rate
+            )
+
+            optimizer = {
+                "SGD" : tf.train.GradientDescentOptimizer(args.learning_rate),
+                "SGD_momentum" : tf.train.MomentumOptimizer(args.learning_rate, args.momentum),
+                "Adam" : tf.train.AdamOptimizer(learning_rate)
+            }[args.optimizer_processed]
+
             self.training = optimizer.minimize(loss, global_step=global_step, name="training")
 
             # Summaries
             accuracy = tf.reduce_mean(tf.cast(tf.equal(self.labels, self.predictions), tf.float32))
             summary_writer = tf.contrib.summary.create_file_writer(args.logdir, flush_millis=10 * 1000)
+            self.accuracy = accuracy
             self.summaries = {}
             with summary_writer.as_default(), tf.contrib.summary.record_summaries_every_n_global_steps(100):
                 self.summaries["train"] = [tf.contrib.summary.scalar("train/loss", loss),
-                                           tf.contrib.summary.scalar("train/accuracy", accuracy)]
+                                           tf.contrib.summary.scalar("train/accuracy", accuracy),
+                                           tf.contrib.summary.scalar("train/learning_rate", learning_rate)]
             with summary_writer.as_default(), tf.contrib.summary.always_record_summaries():
                 for dataset in ["dev", "test"]:
                     self.summaries[dataset] = tf.contrib.summary.scalar(dataset + "/accuracy", accuracy)
@@ -54,7 +67,7 @@ class Network:
         self.session.run([self.training, self.summaries["train"]], {self.images: images, self.labels: labels})
 
     def evaluate(self, dataset, images, labels):
-        self.session.run(self.summaries[dataset], {self.images: images, self.labels: labels})
+       return self.session.run({"summ" : self.summaries[dataset], "acc" : self.accuracy}, {self.images: images, self.labels: labels})["acc"]
 
 
 if __name__ == "__main__":
@@ -78,6 +91,16 @@ if __name__ == "__main__":
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
     args = parser.parse_args()
 
+    if args.optimizer == "SGD":
+        momentum_defined = args.momentum != None
+        args.optimizer_processed = ["SGD", "SGD_momentum"][int(momentum_defined)]
+    else:
+        args.optimizer_processed = args.optimizer
+
+
+    args.decay_rate = None
+
+
     # Create logdir name
     args.logdir = "logs/{}-{}-{}".format(
         os.path.basename(__file__),
@@ -96,6 +119,10 @@ if __name__ == "__main__":
     # is part of expected output when evaluating on ReCodEx.
     mnist = mnist.input_data.read_data_sets(".", reshape=False, seed=42)
     batches_per_epoch = mnist.train.num_examples // args.batch_size
+    batches_in_total = batches_per_epoch * args.epochs
+
+    if args.learning_rate_final != None:
+        args.decay_rate = (args.learning_rate_final / args.learning_rate) ** (1/batches_in_total)
 
     # Construct the network
     network = Network(threads=args.threads)
@@ -108,8 +135,6 @@ if __name__ == "__main__":
             network.train(images, labels)
 
         network.evaluate("dev", mnist.validation.images, mnist.validation.labels)
-    network.evaluate("test", mnist.test.images, mnist.test.labels)
+    accuracy = network.evaluate("test", mnist.test.images, mnist.test.labels)
 
-    # TODO: Compute accuracy on the test set and print it as percentage rounded
-    # to two decimal places.
     print("{:.2f}".format(100 * accuracy))
