@@ -19,7 +19,7 @@ class Network:
             # Inputs
             self.images = tf.placeholder(tf.float32, [None, self.WIDTH, self.HEIGHT, 1], name="images")
             self.labels = tf.placeholder(tf.int64, [None], name="labels")
-            self.is_training = tf.placeholder_with_default(False, [], name="is_training")
+            self.is_training = tf.placeholder(tf.bool, [], name="is_training")
 
             # Computation
             flattened_images = tf.layers.flatten(self.images, name="flatten")
@@ -58,7 +58,7 @@ class Network:
         self.session.run([self.training, self.summaries["train"]], {self.images: images, self.labels: labels, self.is_training: True})
 
     def evaluate(self, dataset, images, labels):
-        return self.session.run({"sum": self.summaries[dataset], "acc":self.accuracy}, {self.images: images, self.labels: labels})['acc']
+        return self.session.run({"sum": self.summaries[dataset], "acc":self.accuracy}, {self.images: images, self.labels: labels, self.is_training: False})['acc']
 
 
 if __name__ == "__main__":
