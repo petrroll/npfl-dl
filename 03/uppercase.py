@@ -53,8 +53,9 @@ class Dataset:
 
     def _create_batch(self, permutation):
         batch_windows = np.zeros([len(permutation), 2 * self._window + 1], np.int32)
+        # feed the 2D array with slices corresponding to individial window displacements 
         for i in range(0, 2 * self._window + 1):
-            batch_windows[:, i] = self._lcletters[permutation + i]
+            batch_windows[:, i] = self._lcletters[permutation + i] 
         return batch_windows, self._labels[permutation]
 
     @property
@@ -83,6 +84,19 @@ class Dataset:
             return True
         return False
 
+    def get_capitilized_text(self, capitalization):
+        capitilized_text = ""
+        for i in range(len(capitalization)):
+            curr_letter = self.text[i]
+            capitilized_text += curr_letter.upper() if capitalization[i] else curr_letter
+        return capitilized_text
+
+    def save_capitilezed_text(self, capitalization, filename = "uppercase_result_test.txt"):
+        # Save capitilized data
+        capitilized_text = self.get_capitilized_text(capitalization)
+        with open(filename, "w", encoding="utf-8") as file:
+            file.write(capitilized_text)
+
 
 class Network:
     def __init__(self, threads, seed=42):
@@ -94,13 +108,31 @@ class Network:
 
     def construct(self, args):
         with self.session.graph.as_default():
+            window_size = 2 * args.window + 1
+
             # Inputs
-            self.windows = tf.placeholder(tf.int32, [None, 2 * args.window + 1], name="windows")
-            self.labels = tf.placeholder(tf.bool, [None], name="labels") # Or you can use tf.int32
+            self.windows = tf.placeholder(tf.int32, [None, window_size], name="windows")
+            self.labels = tf.placeholder(tf.int32, [None], name="labels") # Or you can use tf.int32
 
-            # TODO: Define a suitable network with appropriate loss function
+            input_layer = tf.one_hot(self.windows, depth = args.alphabet_size, axis = 1)
+            input_layer = tf.layers.flatten(input_layer)
 
-            # TODO: Define training
+            last_layer = tf.to_float(input_layer)
+            for i in range(args.layers):
+                last_layer = tf.layers.dense(last_layer, args.alphabet_size * window_size, name = f"hidden_{i}", activation=tf.nn.relu)
+                last_layer = tf.layers.dropout(last_layer, rate = args.dropout)
+
+            # output layers
+            # When the output layer has an activation function (e.g. ReLU) the network is unable to learn anything probably
+            # ..due to it squashing all information that could be used to compute a gradient. 
+            output_layer = tf.layers.dense(last_layer, 2, name="output_layer", activation=None) 
+            self.predictions = tf.argmax(output_layer, axis=1, name="actions", output_type=tf.int32)
+
+            # training
+            loss = tf.losses.sparse_softmax_cross_entropy(labels=self.labels, logits=output_layer, scope="loss")
+            global_step = tf.train.create_global_step()
+            self.training = tf.train.AdamOptimizer().minimize(loss, global_step=global_step, name="training")
+
 
             # Summaries
             self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.labels, self.predictions), tf.float32))
@@ -123,7 +155,10 @@ class Network:
         self.session.run([self.training, self.summaries["train"]], {self.windows: windows, self.labels: labels})
 
     def evaluate(self, dataset, windows, labels):
-        return self.session.run(self.summaries[dataset], {self.windows: windows, self.labels: labels})
+        return self.session.run({"sum" : self.summaries[dataset], "acc": self.accuracy}, {self.windows: windows, self.labels: labels})["acc"]
+
+    def infer(self, windows):
+        return self.session.run(self.predictions, {self.windows: windows})
 
 
 if __name__ == "__main__":
@@ -137,11 +172,15 @@ if __name__ == "__main__":
 
     # Parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--alphabet_size", default=None, type=int, help="Alphabet size.")
-    parser.add_argument("--batch_size", default=None, type=int, help="Batch size.")
-    parser.add_argument("--epochs", default=None, type=int, help="Number of epochs.")
-    parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
-    parser.add_argument("--window", default=None, type=int, help="Size of the window to use.")
+    parser.add_argument("--alphabet_size", default=49, type=int, help="Alphabet size.")
+    parser.add_argument("--batch_size", default=1024 , type=int, help="Batch size.")
+    parser.add_argument("--epochs", default=5, type=int, help="Number of epochs.")
+    parser.add_argument("--threads", default=4, type=int, help="Maximum number of threads to use.")
+    parser.add_argument("--window", default=5, type=int, help="Size of the window to use.")
+    parser.add_argument("--layers", default=2, type=int, help="Number of hidden layers.")
+    parser.add_argument("--dropout", default=0.3, type=float, help="Dropout rate on hidden layers.")
+
+
     args = parser.parse_args()
 
     # Create logdir name
@@ -168,6 +207,12 @@ if __name__ == "__main__":
             network.train(windows, labels)
 
         dev_windows, dev_labels = dev.all_data()
-        network.evaluate("dev", dev_windows, dev_labels)
+        dev_acc = network.evaluate("dev", dev_windows, dev_labels)
+        print(f"Acc: {dev_acc}")
 
-    # TODO: Generate the uppercased test set
+    test_windows, _ = test.all_data()
+    capitalization = network.infer(test_windows)
+    test.save_capitilezed_text(capitalization)
+
+
+
