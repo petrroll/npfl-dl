@@ -19,16 +19,13 @@ class Network:
             # Inputs
             self.images = tf.placeholder(tf.float32, [None, self.WIDTH, self.HEIGHT, 1], name="images")
             self.labels = tf.placeholder(tf.int64, [None], name="labels")
-            self.is_training = tf.placeholder(tf.bool, [], name="is_training")
+            self.is_training = tf.placeholder_with_default(False, [], name="is_training")
 
             # Computation
             flattened_images = tf.layers.flatten(self.images, name="flatten")
             hidden_layer = tf.layers.dense(flattened_images, args.hidden_layer, activation=tf.nn.relu, name="hidden_layer")
 
-            # TODO: Implement dropout on the hidden layer using tf.layers.dropout,
-            # with using dropout date of args.dropout. The dropout must be active only
-            # during training -- use `self.is_training` placeholder to control the
-            # `training` argument of tf.layers.dropout. Store the result to `hidden_layer_dropout`.
+            hidden_layer_dropout = tf.layers.dropout(hidden_layer, rate = args.dropout, training=self.is_training)
 
             output_layer = tf.layers.dense(hidden_layer_dropout, self.LABELS, activation=None, name="output_layer")
             self.predictions = tf.argmax(output_layer, axis=1)
@@ -38,8 +35,10 @@ class Network:
             global_step = tf.train.create_global_step()
             self.training = tf.train.AdamOptimizer().minimize(loss, global_step=global_step, name="training")
 
-            # Summaries
             accuracy = tf.reduce_mean(tf.cast(tf.equal(self.labels, self.predictions), tf.float32))
+            self.accuracy = accuracy
+
+            # Summaries
             summary_writer = tf.contrib.summary.create_file_writer(args.logdir, flush_millis=10 * 1000)
             self.summaries = {}
             with summary_writer.as_default(), tf.contrib.summary.record_summaries_every_n_global_steps(100):
@@ -56,10 +55,10 @@ class Network:
                 tf.contrib.summary.initialize(session=self.session, graph=self.session.graph)
 
     def train(self, images, labels):
-        self.session.run([self.training, self.summaries["train"]], {self.images: images, self.labels: labels})
+        self.session.run([self.training, self.summaries["train"]], {self.images: images, self.labels: labels, self.is_training: True})
 
     def evaluate(self, dataset, images, labels):
-        self.session.run(self.summaries[dataset], {self.images: images, self.labels: labels})
+        return self.session.run({"sum": self.summaries[dataset], "acc":self.accuracy}, {self.images: images, self.labels: labels})['acc']
 
 
 if __name__ == "__main__":
@@ -111,8 +110,6 @@ if __name__ == "__main__":
             network.train(images, labels)
 
         network.evaluate("dev", mnist.validation.images, mnist.validation.labels)
-    network.evaluate("test", mnist.test.images, mnist.test.labels)
+    accuracy = network.evaluate("test", mnist.test.images, mnist.test.labels)
 
-    # TODO: Compute accuracy on the test set and print it as percentage rounded
-    # to two decimal places.
     print("{:.2f}".format(100 * accuracy))
