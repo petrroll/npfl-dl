@@ -106,7 +106,7 @@ class Network:
         self.session = tf.Session(graph = graph, config=tf.ConfigProto(inter_op_parallelism_threads=threads,
                                                                        intra_op_parallelism_threads=threads))
 
-    def construct(self, args):
+    def construct(self, args, batches_per_epoch):
         with self.session.graph.as_default():
             window_size = 2 * args.window + 1
 
@@ -118,8 +118,15 @@ class Network:
             input_layer = tf.layers.flatten(input_layer)
 
             last_layer = tf.to_float(input_layer)
+            activation_fun={
+                "relu": tf.nn.relu,
+                "tanh" : tf.nn.tanh,
+                "sigmoid" : tf.nn.sigmoid,
+                "none" : None,
+                }[args.activation] 
+
             for i in range(args.layers):
-                last_layer = tf.layers.dense(last_layer, args.alphabet_size * window_size, name = f"hidden_{i}", activation=tf.nn.relu)
+                last_layer = tf.layers.dense(last_layer, args.alphabet_size * window_size, name = f"hidden_{i}", activation=activation_fun)
                 last_layer = tf.layers.dropout(last_layer, rate = args.dropout)
 
             # output layers
@@ -129,9 +136,17 @@ class Network:
             self.predictions = tf.argmax(output_layer, axis=1, name="actions", output_type=tf.int32)
 
             # training
-            loss = tf.losses.sparse_softmax_cross_entropy(labels=self.labels, logits=output_layer, scope="loss")
             global_step = tf.train.create_global_step()
-            self.training = tf.train.AdamOptimizer().minimize(loss, global_step=global_step, name="training")
+            learning_decay_rate = (args.learning_rate_final / args.learning_rate) ** (1/(args.epochs - 1))
+            learning_rate = tf.train.exponential_decay(
+                args.learning_rate,
+                global_step,
+                batches_per_epoch,
+                learning_decay_rate,
+            )
+
+            loss = tf.losses.sparse_softmax_cross_entropy(labels=self.labels, logits=output_layer, scope="loss")
+            self.training = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss, global_step=global_step, name="training")
 
 
             # Summaries
@@ -175,10 +190,13 @@ if __name__ == "__main__":
     parser.add_argument("--alphabet_size", default=49, type=int, help="Alphabet size.")
     parser.add_argument("--batch_size", default=1024 , type=int, help="Batch size.")
     parser.add_argument("--epochs", default=5, type=int, help="Number of epochs.")
-    parser.add_argument("--threads", default=4, type=int, help="Maximum number of threads to use.")
+    parser.add_argument("--threads", default=6, type=int, help="Maximum number of threads to use.")
     parser.add_argument("--window", default=5, type=int, help="Size of the window to use.")
-    parser.add_argument("--layers", default=2, type=int, help="Number of hidden layers.")
+    parser.add_argument("--layers", default=3, type=int, help="Number of hidden layers.")
     parser.add_argument("--dropout", default=0.3, type=float, help="Dropout rate on hidden layers.")
+    parser.add_argument("--learning_rate", default=0.001, type=float, help="Learning rate.")
+    parser.add_argument("--learning_rate_final", default=0.0001, type=float, help="Learning rate.")
+    parser.add_argument("--activation", default="relu", type=str, help="Activation function.")
 
 
     args = parser.parse_args()
@@ -197,8 +215,9 @@ if __name__ == "__main__":
     test = Dataset("uppercase_data_test.txt", args.window, alphabet=train.alphabet)
 
     # Construct the network
+    batches_per_epoch = len(train.text) // args.batch_size
     network = Network(threads=args.threads)
-    network.construct(args)
+    network.construct(args, batches_per_epoch)
 
     # Train
     for i in range(args.epochs):
