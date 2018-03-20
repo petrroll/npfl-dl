@@ -20,17 +20,21 @@ class Network:
             self.images = tf.placeholder(tf.float32, [None, self.WIDTH, self.HEIGHT, 1], name="images")
             self.labels = tf.placeholder(tf.int64, [None], name="labels")
             self.is_training = tf.placeholder(tf.bool, [], name="is_training")
+            last_layer = self.images
 
-            # Computation
-            # TODO: Add layers described in the args.cnn. Layers are separated by a comma and can be:
+            # Layers are separated by a comma and can be:
             # - C-filters-kernel_size-stride-padding: Add a convolutional layer with ReLU activation and
             #   specified number of filters, kernel size, stride and padding. Example: C-10-3-1-same
             # - M-kernel_size-stride: Add max pooling with specified size and stride. Example: M-3-2
             # - F: Flatten inputs
             # - R-hidden_layer_size: Add a dense layer with ReLU activation and specified size. Ex: R-100
-            # Store result in `features`.
+            for (name, params) in self.__parse_features(args.cnn):
+                if name   == "R": last_layer = tf.layers.dense(last_layer, units=params[0], activation=tf.nn.relu)
+                elif name == "F": last_layer = tf.layers.flatten(last_layer)
+                elif name == "M": last_layer = tf.layers.max_pooling2d(last_layer, pool_size=params[0], strides=params[1])
+                elif name == "C": last_layer = tf.layers.conv2d(last_layer, filters=params[0], kernel_size=params[1], strides=params[2], padding=params[3], activation=tf.nn.relu)
 
-            output_layer = tf.layers.dense(features, self.LABELS, activation=None, name="output_layer")
+            output_layer = tf.layers.dense(last_layer, self.LABELS, activation=None, name="output_layer")
             self.predictions = tf.argmax(output_layer, axis=1)
 
             # Training
@@ -54,6 +58,15 @@ class Network:
             self.session.run(tf.global_variables_initializer())
             with summary_writer.as_default():
                 tf.contrib.summary.initialize(session=self.session, graph=self.session.graph)
+
+    @staticmethod      
+    def __parse_features(features_string):  
+        def __parse_config(config):
+            name, *args = config.split("-")
+            parsed_args = [int(x) if x.isdigit() else x for x in args]
+            return (name, parsed_args)
+
+        return [__parse_config(x) for x in features_string.split(",")]
 
     def train(self, images, labels):
         self.session.run([self.training, self.summaries["train"]], {self.images: images, self.labels: labels})
