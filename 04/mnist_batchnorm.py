@@ -21,30 +21,29 @@ class Network:
             self.labels = tf.placeholder(tf.int64, [None], name="labels")
             self.is_training = tf.placeholder(tf.bool, [], name="is_training")
 
-            # Computation
-            # TODO: Add layers described in the args.cnn. Layers are separated by a comma and
-            # in addition to the ones allowed in mnist_conv.py you should also support
-            # - CB-filters-kernel_size-stride-padding: Add a convolutional layer with BatchNorm
-            #   and ReLU activation and specified number of filters, kernel size, stride and padding.
-            #   Example: CB-10-3-1-same
-            # To correctly implement BatchNorm:
-            # - The convolutional layer should not use any activation and no biases.
-            # - The output of the convolutional layer is passed to batch_normalization layer, which
-            #   should specify `training=True` during training and `training=False` during inference.
-            # - The output of the batch_normalization layer is passed through tf.nn.relu.
-            # - You need to update the moving averages of mean and variance in the batch normalization
-            #   layer during each training batch. Such update operations can be obtained using
-            #   `tf.get_collection(tf.GraphKeys.UPDATE_OPS)` and utilized either directly in `session.run`,
-            #   or (preferably) attached to `self.train` using `tf.control_dependencies`.
-            # Store result in `features`.
+            last_layer = self.images
+            for (name, params) in self.__parse_features(args.cnn):
+                if name   == "R": last_layer = tf.layers.dense(last_layer, units=params[0], activation=tf.nn.relu)
+                elif name == "F": last_layer = tf.layers.flatten(last_layer)
+                elif name == "M": last_layer = tf.layers.max_pooling2d(last_layer, pool_size=params[0], strides=params[1])
+                elif name == "C": last_layer = tf.layers.conv2d(last_layer, filters=params[0], kernel_size=params[1], strides=params[2], padding=params[3], activation=tf.nn.relu)
+                elif name == "CB":
+                    last_layer = tf.layers.conv2d(last_layer, filters=params[0], kernel_size=params[1], strides=params[2], padding=params[3], activation=None, use_bias=False)
+                    last_layer = tf.layers.batch_normalization(last_layer, training=self.is_training)
+                    last_layer = tf.nn.relu(last_layer)
+                else: raise  Exception("Wrong argument: " + str(name) + ":" + str(params))
 
-            output_layer = tf.layers.dense(features, self.LABELS, activation=None, name="output_layer")
+
+            output_layer = tf.layers.dense(last_layer, self.LABELS, activation=None, name="output_layer")
             self.predictions = tf.argmax(output_layer, axis=1)
 
             # Training
             loss = tf.losses.sparse_softmax_cross_entropy(self.labels, output_layer, scope="loss")
             global_step = tf.train.create_global_step()
-            self.training = tf.train.AdamOptimizer().minimize(loss, global_step=global_step, name="training")
+
+            update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+            with tf.control_dependencies(update_ops):
+                self.training = tf.train.AdamOptimizer().minimize(loss, global_step=global_step, name="training")
 
             # Summaries
             self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.labels, self.predictions), tf.float32))
@@ -63,11 +62,21 @@ class Network:
             with summary_writer.as_default():
                 tf.contrib.summary.initialize(session=self.session, graph=self.session.graph)
 
+
+    @staticmethod      
+    def __parse_features(features_string):  
+        def __parse_config(config):
+            name, *args = config.split("-")
+            parsed_args = [int(x) if x.isdigit() else x for x in args]
+            return (name, parsed_args)
+
+        return [__parse_config(x) for x in features_string.split(",")]
+
     def train(self, images, labels):
-        self.session.run([self.training, self.summaries["train"]], {self.images: images, self.labels: labels})
+        self.session.run([self.training, self.summaries["train"]], {self.images: images, self.labels: labels, self.is_training: True})
 
     def evaluate(self, dataset, images, labels):
-        accuracy, _ = self.session.run([self.accuracy, self.summaries[dataset]], {self.images: images, self.labels: labels})
+        accuracy, _ = self.session.run([self.accuracy, self.summaries[dataset]], {self.images: images, self.labels: labels, self.is_training: False})
         return accuracy
 
 
@@ -83,7 +92,7 @@ if __name__ == "__main__":
     # Parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", default=50, type=int, help="Batch size.")
-    parser.add_argument("--cnn", default=None, type=str, help="Description of the CNN architecture.")
+    parser.add_argument("--cnn", default="CB-10-3-2-same,M-3-2,F,R-100", type=str, help="Description of the CNN architecture.")
     parser.add_argument("--epochs", default=10, type=int, help="Number of epochs.")
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
     args = parser.parse_args()
