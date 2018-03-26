@@ -33,6 +33,7 @@ class Network:
                 elif name == "F": last_layer = tf.layers.flatten(last_layer)
                 elif name == "M": last_layer = tf.layers.max_pooling2d(last_layer, pool_size=params[0], strides=params[1])
                 elif name == "C": last_layer = tf.layers.conv2d(last_layer, filters=params[0], kernel_size=params[1], strides=params[2], padding=params[3], activation=tf.nn.relu)
+                else: raise  Exception("Wrong argument")
 
             output_layer = tf.layers.dense(last_layer, self.LABELS, activation=None, name="output_layer")
             self.predictions = tf.argmax(output_layer, axis=1)
