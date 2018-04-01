@@ -28,9 +28,15 @@ class Dataset:
         batch_perm, self._permutation = self._permutation[:batch_size], self._permutation[batch_size:]
         return self._images[batch_perm], self._labels[batch_perm], self._masks[batch_perm]
 
-    def epoch_finished(self):
+
+    def next_batch_images(self, batch_size):
+        batch_size = min(batch_size, len(self._permutation))
+        batch_perm, self._permutation = self._permutation[:batch_size], self._permutation[batch_size:]
+        return self._images[batch_perm]
+
+    def epoch_finished(self, shuffle = True):
         if len(self._permutation) == 0:
-            self._permutation = np.random.permutation(len(self._images))
+            self._permutation = np.random.permutation(len(self._images)) if shuffle else range(len(self._images))
             return True
         return False
 
@@ -196,6 +202,8 @@ if __name__ == "__main__":
     parser.add_argument("--learning_rate_final", default=0.0001, type=float, help="Learning rate.")
 
     parser.add_argument("--batch_size", default=128, type=int, help="Batch size.")
+    parser.add_argument("--predict_batch_size", default=512, type=int, help="Batch size for prediction.")
+
     parser.add_argument("--epochs", default=20, type=int, help="Number of epochs.")
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
 
@@ -236,7 +244,9 @@ if __name__ == "__main__":
         print(f"{i}|acc:{acc:.4f}|iou:{iou:.4f}")
 
     if args.printout:
-        labels, masks = network.predict(test.images)
         with open(f"{args.logname}_fashion_masks_test.txt", "w") as test_file:
-            for i in range(len(labels)):
-                print(labels[i], *masks[i].astype(np.uint8).flatten(), file=test_file)
+            while not test.epoch_finished(False):
+                images = test.next_batch_images(args.predict_batch_size)
+                labels, masks = network.predict(images)
+                for i in range(len(labels)):
+                    print(labels[i], *masks[i].astype(np.uint8).flatten(), file=test_file)
