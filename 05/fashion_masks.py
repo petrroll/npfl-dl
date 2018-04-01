@@ -102,11 +102,11 @@ class Network:
                 self.training = tf.train.AdamOptimizer(learning_rate).minimize(loss, global_step=global_step, name="training")
             
             # Summaries
-            accuracy = tf.reduce_mean(tf.cast(tf.equal(self.labels, self.labels_predictions), tf.float32))
+            self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.labels, self.labels_predictions), tf.float32))
             only_correct_masks = tf.where(tf.equal(self.labels, self.labels_predictions), 
                                           self.masks_predictions, tf.zeros_like(self.masks_predictions))
             intersection = tf.reduce_sum(only_correct_masks * self.masks, axis=[1,2,3])
-            iou = tf.reduce_mean(
+            self.iou = tf.reduce_mean(
                 intersection / (tf.reduce_sum(only_correct_masks, axis=[1,2,3]) + tf.reduce_sum(self.masks, axis=[1,2,3]) - intersection)
             )
 
@@ -116,8 +116,8 @@ class Network:
                 self.summaries["train"] = [tf.contrib.summary.scalar("train/loss", loss),
                                            tf.contrib.summary.scalar("train/loss_labels", labels_loss),
                                            tf.contrib.summary.scalar("train/loss_masks", mask_loss),
-                                           tf.contrib.summary.scalar("train/accuracy_labels", accuracy),
-                                           tf.contrib.summary.scalar("train/iou", iou),
+                                           tf.contrib.summary.scalar("train/accuracy_labels", self.accuracy),
+                                           tf.contrib.summary.scalar("train/iou", self.iou),
                                            tf.contrib.summary.image("train/images", self.images),
                                            tf.contrib.summary.image("train/masks", self.masks_predictions)]
             with summary_writer.as_default(), tf.contrib.summary.always_record_summaries():
@@ -125,8 +125,8 @@ class Network:
                     self.summaries[dataset] = [tf.contrib.summary.scalar(dataset+"/loss", loss),
                                                tf.contrib.summary.scalar(dataset+"/loss_labels", labels_loss),
                                                tf.contrib.summary.scalar(dataset+"/loss_masks", mask_loss),
-                                               tf.contrib.summary.scalar(dataset+"/accuracy_labels", accuracy),
-                                               tf.contrib.summary.scalar(dataset+"/iou", iou),
+                                               tf.contrib.summary.scalar(dataset+"/accuracy_labels", self.accuracy),
+                                               tf.contrib.summary.scalar(dataset+"/iou", self.iou),
                                                tf.contrib.summary.image(dataset+"/images", self.images),
                                                tf.contrib.summary.image(dataset+"/masks", self.masks_predictions)]
 
@@ -169,8 +169,9 @@ class Network:
                          {self.images: images, self.labels: labels, self.masks: masks, self.is_training: True})
 
     def evaluate(self, dataset, images, labels, masks):
-        self.session.run(self.summaries[dataset],
+        _, acc, iou = self.session.run((self.summaries[dataset], self.accuracy, self.iou),
                          {self.images: images, self.labels: labels, self.masks: masks, self.is_training: False})
+        return (acc, iou)
 
     def predict(self, images):
         return self.session.run([self.labels_predictions, self.masks_predictions],
@@ -231,7 +232,8 @@ if __name__ == "__main__":
             images, labels, masks = train.next_batch(args.batch_size)
             network.train(images, labels, masks)
 
-        network.evaluate("dev", dev.images, dev.labels, dev.masks)
+        acc, iou = network.evaluate("dev", dev.images, dev.labels, dev.masks)
+        print(f"{i}|acc:{acc:.4f}|iou:{iou:.4f}")
 
     if args.printout:
         labels, masks = network.predict(test.images)
