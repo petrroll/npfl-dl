@@ -116,16 +116,16 @@ class Network:
                 self.summaries["train"] = [tf.contrib.summary.scalar("train/loss", loss),
                                            tf.contrib.summary.scalar("train/loss_labels", labels_loss),
                                            tf.contrib.summary.scalar("train/loss_masks", mask_loss),
-                                           tf.contrib.summary.scalar("train/accuracy", accuracy),
+                                           tf.contrib.summary.scalar("train/accuracy_labels", accuracy),
                                            tf.contrib.summary.scalar("train/iou", iou),
                                            tf.contrib.summary.image("train/images", self.images),
                                            tf.contrib.summary.image("train/masks", self.masks_predictions)]
             with summary_writer.as_default(), tf.contrib.summary.always_record_summaries():
                 for dataset in ["dev", "test"]:
                     self.summaries[dataset] = [tf.contrib.summary.scalar(dataset+"/loss", loss),
-                                               tf.contrib.summary.scalar("train/loss_labels", labels_loss),
-                                               tf.contrib.summary.scalar("train/loss_masks", mask_loss),
-                                               tf.contrib.summary.scalar(dataset+"/accuracy", accuracy),
+                                               tf.contrib.summary.scalar(dataset+"/loss_labels", labels_loss),
+                                               tf.contrib.summary.scalar(dataset+"/loss_masks", mask_loss),
+                                               tf.contrib.summary.scalar(dataset+"/accuracy_labels", accuracy),
                                                tf.contrib.summary.scalar(dataset+"/iou", iou),
                                                tf.contrib.summary.image(dataset+"/images", self.images),
                                                tf.contrib.summary.image(dataset+"/masks", self.masks_predictions)]
