@@ -52,8 +52,7 @@ class Dataset:
             return True
         return False
 
-
-class Network:
+class Network():
     LABELS = 10
 
     def __init__(self, threads, seed=42):
@@ -71,17 +70,31 @@ class Network:
             self.labels = tf.placeholder(tf.int64, [None], name="labels")
             self.is_training = tf.placeholder(tf.bool, [], name="is_training")
 
-            # TODO: Computation and training.
-            #
-            # The code below assumes that:
-            # - loss is stored in `loss`
-            # - training is stored in `self.training`
-            # - label predictions are stored in `self.predictions`
+            # Computation
+            last_layer = self.voxels
+            self.global_step = tf.train.create_global_step()            
+
+            # Create network
+            last_layer = self.__create_layers_from_config_str(args.cnn, last_layer)
+
+            # Predictions
+            predictions_dense = tf.layers.dense(last_layer, self.LABELS)
+            self.predictions = tf.argmax(predictions_dense, axis = 1)
+
+            # Loss
+            loss = tf.losses.sparse_softmax_cross_entropy(self.labels, predictions_dense, scope="labels_loss")
+
+            # Training
+            learning_rate = self.__create_exp_decay_learning_rate(args)
+            update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+            with tf.control_dependencies(update_ops):
+                self.training = tf.train.AdamOptimizer(learning_rate).minimize(loss, global_step=self.global_step, name="training")
 
             # Summaries
             self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.labels, self.predictions), tf.float32))
             summary_writer = tf.contrib.summary.create_file_writer(args.logdir, flush_millis=10 * 1000)
             self.summaries = {}
+
             with summary_writer.as_default(), tf.contrib.summary.record_summaries_every_n_global_steps(8):
                 self.summaries["train"] = [tf.contrib.summary.scalar("train/loss", loss),
                                            tf.contrib.summary.scalar("train/accuracy", self.accuracy)]
@@ -95,6 +108,55 @@ class Network:
             with summary_writer.as_default():
                 tf.contrib.summary.initialize(session=self.session, graph=self.session.graph)
 
+    def __create_exp_decay_learning_rate(self, args):
+        # Learning rate global
+        learning_decay_rate = (args.learning_rate_final / args.learning_rate) ** (1/(args.epochs - 1)) if args.epochs > 1 else 1.0
+        learning_rate = tf.train.exponential_decay(
+            args.learning_rate,
+            self.global_step,
+            args.batches_per_epoch,
+            learning_decay_rate,
+        )
+        return learning_rate
+
+    def __create_layers_from_config_str(self, config_string, last_layer):
+        for layer_config in self.__parse_features(config_string):
+            last_layer = self.__create_and_connect_layer(layer_config, last_layer)
+        return last_layer
+
+
+    def __create_and_connect_layer(self, config, last_layer):
+        name, params = config
+        if name   == "R": return tf.layers.dense(last_layer, units=params[0], activation=tf.nn.relu)
+        elif name == "D": return tf.layers.dropout(last_layer, rate=0.5, training=self.is_training)
+        elif name == "F": return tf.layers.flatten(last_layer)
+        elif name == "M": return tf.layers.max_pooling3d(last_layer, pool_size=params[0], strides=params[1])
+        elif name == "C": return tf.layers.conv3d(last_layer, 
+            filters=params[0], kernel_size=params[1], strides=params[2], padding=params[3], activation=tf.nn.relu)
+        elif name == "CT": return tf.layers.conv3d_transpose(last_layer, 
+            filters=params[0], kernel_size=params[1], strides=params[2], padding=params[3], activation=tf.nn.relu)
+        elif name == "CB":
+            last_layer = tf.layers.conv3d(last_layer, 
+                filters=params[0], kernel_size=params[1], strides=params[2], padding=params[3], activation=None, use_bias=False)
+            last_layer = tf.layers.batch_normalization(last_layer, training=self.is_training)
+            return tf.nn.relu(last_layer)
+        elif name == "CBT":
+            last_layer = tf.layers.conv3d_transpose(last_layer, 
+                filters=params[0], kernel_size=params[1], strides=params[2], padding=params[3], activation=None, use_bias=False)
+            last_layer = tf.layers.batch_normalization(last_layer, training=self.is_training)
+            return tf.nn.relu(last_layer)
+        else: raise Exception()
+
+    @staticmethod      
+    def __parse_features(features_string):  
+        def __parse_config(config):
+            name, *args = config.split("-")
+            parsed_args = [int(x) if x.isdigit() else x for x in args]
+            return (name, parsed_args)
+
+        return [__parse_config(x) for x in features_string.split(",")]
+
+
     def train(self, voxels, labels):
         self.session.run([self.training, self.summaries["train"]], {self.voxels: voxels, self.labels: labels, self.is_training: True})
 
@@ -104,6 +166,7 @@ class Network:
 
     def predict(self, voxels):
         return self.session.run(self.predictions, {self.voxels: voxels, self.is_training: False})
+
 
 
 if __name__ == "__main__":
@@ -117,11 +180,21 @@ if __name__ == "__main__":
 
     # Parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batch_size", default=None, type=int, help="Batch size.")
-    parser.add_argument("--epochs", default=None, type=int, help="Number of epochs.")
+    parser.add_argument("--batch_size", default=128, type=int, help="Batch size.")
+    parser.add_argument("--epochs", default=20, type=int, help="Number of epochs.")
+
     parser.add_argument("--modelnet_dim", default=20, type=int, help="Dimension of ModelNet data.")
-    parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
-    parser.add_argument("--train_split", default=None, type=float, help="Ratio of examples to use as train.")
+    parser.add_argument("--threads", default=4, type=int, help="Maximum number of threads to use.")
+    parser.add_argument("--train_split", default=0.9, type=float, help="Ratio of examples to use as train.")
+
+    parser.add_argument("--cnn", default="C-64-3-1-same,C-64-3-1-same,M-3-2,C-128-3-1-same,C-128-3-1-same,M-3-2,F", type=str, help="Description of the CNN architecture common.")
+
+    parser.add_argument("--learning_rate", default=0.002, type=float, help="Learning rate.")
+    parser.add_argument("--learning_rate_final", default=0.0001, type=float, help="Learning rate.")
+
+    parser.add_argument("--acc_threshold", default=0.85, type=float, help="Minimum accuracy to predict & safe the data.")
+    parser.add_argument("--batch_evaluation", default=False, type=bool, help="Is evaluation batched.") # Distors dev summaries, can help with OOM. 
+
     args = parser.parse_args()
 
     # Create logdir name
@@ -137,22 +210,46 @@ if __name__ == "__main__":
     test = Dataset("modelnet{}-test.npz".format(args.modelnet_dim), shuffle_batches=False)
 
     # Construct the network
+    args.batches_per_epoch = len(train.labels) // args.batch_size
     network = Network(threads=args.threads)
     network.construct(args)
 
-    # Train
-    for i in range(args.epochs):
-        while not train.epoch_finished():
-            voxels, labels = train.next_batch(args.batch_size)
+
+    # Helper functions that train, test, and predict datasets. 
+    def train_epoch(data):
+        while not data.epoch_finished():
+            voxels, labels = data.next_batch(args.batch_size)
             network.train(voxels, labels)
 
-        network.evaluate("dev", dev.voxels, dev.labels)
+    def evaluate_on(data):
+        acc = 0.0
+        while not data.epoch_finished():
+            evaluate_batch_size = args.batch_size if args.batch_evaluation else len(data.labels)
+            voxels, labels = data.next_batch(evaluate_batch_size)
+            batch_acc = network.evaluate("dev", voxels, labels)
+            acc += batch_acc * len(labels) # average over all batches weighted by their length 
+        acc /= len(data.labels)
+        return acc
 
-    # Predict test data
-    with open("{}/3d_recognition_test.txt".format(args.logdir), "w") as test_file:
-        while not test.epoch_finished():
-            voxels, _ = test.next_batch(args.batch_size)
-            labels = network.predict(voxels)
 
-            for label in labels:
-                print(label, file=test_file)
+    def predict_and_save(data, save_suffix):
+        with open("{}/3d_recognition_test_{}.txt".format(args.logdir, save_suffix), "w") as test_file:
+            while not data.epoch_finished():
+                voxels, _ = data.next_batch(args.batch_size)
+                labels = network.predict(voxels)
+
+                for label in labels:
+                    print(label, file=test_file)
+
+    # Train
+    for i in range(args.epochs):
+        train_epoch(train)
+        dev_acc = evaluate_on(dev)
+        print("{}|acc:{:.4f}".format(i, dev_acc))
+
+        if dev_acc > args.acc_threshold:
+            args.acc_threshold = dev_acc
+            predict_and_save(test, str(dev_acc))
+
+
+
