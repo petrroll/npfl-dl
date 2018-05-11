@@ -52,6 +52,8 @@ class Network:
             char_embeddings = tf.get_variable("char_embdgs", [num_chars, args.cle_dim])
 
             # TODO: Embed self.charseqs (list of unique words in the batch) using the character embeddings.
+
+            # embeded_chars's shape is [num_of_words_in_batch, individual_word_lenghts, char_embed_dim]
             embeded_chars = tf.nn.embedding_lookup(char_embeddings, self.charseqs)
 
             # TODO: Use `tf.nn.bidirectional_dynamic_rnn` to process embedded self.charseqs using
@@ -64,10 +66,19 @@ class Network:
 
             # TODO: Sum the resulting fwd and bwd state to generate character-level word embedding (CLE)
             # of unique words in the batch.
+
+            # words_cle's shape is [num_of_words_in_batch, cle_dim]
             words_cle = tf.add(chars_fwd_state, chars_bck_state)
 
             # TODO: Generate CLEs of all words in the batch by indexing the just computed embeddings
             # by self.charseq_ids (using tf.nn.embedding_lookup).
+
+            # The charseq_ids has shape [batch_size, sentence_lenght]. The words_cle network 
+            # .. is unrolled across it's inputs' first dimension (batch) which is charseqs 
+            # .. (shape [num_of_words_in_batch, individual_word_lenghts]) -> unrolled once for each word.
+            # This selects the appropriate copy of the words_cle network (that has its inputs wired to
+            # .. the appropriate charseqs) for each word (charseq_ids length) in each sentence 
+            # .. (batch dimension). The resulting shape is [batch_size, sentence_lenght, cle_dim].
             cle = tf.nn.embedding_lookup(words_cle, self.charseq_ids)
 
             # TODO: Concatenate the word embeddings (computed above) and the CLE (in this order).
