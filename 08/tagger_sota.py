@@ -52,12 +52,72 @@ class Network:
             self.charseq_ids = tf.placeholder(tf.int32, [None, None], name="charseq_ids")
             self.tags = tf.placeholder(tf.int32, [None, None], name="tags")
 
-            # TODO: Training.
-            # Define:
-            # - loss in `loss`
-            # - training in `self.training`
-            # - predictions in `self.predictions`
-            # - weights in `weights`
+
+            #
+            # Word embeddings
+            #            
+            word_embeddings = tf.get_variable("wrd_embdgs", [num_words, args.we_dim])
+            embeded_words = tf.nn.embedding_lookup(word_embeddings, self.word_ids)
+
+            #
+            # CLE
+            #
+
+            # embeded_chars's shape is [num_of_words_in_batch, individual_word_lenghts, char_embed_dim]
+            char_embeddings = tf.get_variable("char_embdgs", [num_chars, args.cle_dim])
+            embeded_chars = tf.nn.embedding_lookup(char_embeddings, self.charseqs)
+
+            _, (chars_fwd_state, chars_bck_state) = tf.nn.bidirectional_dynamic_rnn(
+                tf.nn.rnn_cell.GRUCell(args.cle_dim), 
+                tf.nn.rnn_cell.GRUCell(args.cle_dim), 
+                embeded_chars, dtype=tf.float32, sequence_length=self.charseq_lens)
+
+            # words_cle's shape is [num_of_words_in_batch, cle_dim]
+            words_cle = tf.add(chars_fwd_state, chars_bck_state)
+
+            # The charseq_ids has shape [batch_size, sentence_lenght]. The words_cle network 
+            # .. is unrolled across it's inputs' first dimension (batch) which is charseqs 
+            # .. (shape [num_of_words_in_batch, individual_word_lenghts]) -> unrolled once for each word.
+            # This selects the appropriate copy of the words_cle network (that has its inputs wired to
+            # .. the appropriate charseqs) for each word (charseq_ids length) in each sentence 
+            # .. (batch dimension). The resulting shape is [batch_size, sentence_lenght, cle_dim].
+            cle = tf.nn.embedding_lookup(words_cle, self.charseq_ids)
+
+            # Concat word and cle embeddings
+            embedings = tf.concat([embeded_words, cle], axis=2)
+            
+            #
+            # Prediction network
+            #
+
+            # Prepare cells for the prediction network
+            if args.rnn_cell == "RNN":
+                rnn_creation = tf.nn.rnn_cell.BasicRNNCell
+            elif args.rnn_cell == "LSTM":
+                rnn_creation = tf.nn.rnn_cell.BasicLSTMCell
+            elif args.rnn_cell == "GRU":
+                rnn_creation = tf.nn.rnn_cell.GRUCell
+            else: rnn_creation = None
+
+            rnn_fwd = rnn_creation(args.rnn_cell_dim)
+            rnn_bck = rnn_creation(args.rnn_cell_dim)
+
+            # Create biRNN 
+            bin_rnn_outputs, _ = tf.nn.bidirectional_dynamic_rnn(rnn_fwd, rnn_bck, embedings, sequence_length = self.sentence_lens, dtype=tf.float32)
+
+            # biRNN output
+            memories_output = tf.concat(bin_rnn_outputs, 2)
+            output = tf.layers.dense(memories_output, num_tags, activation=None)
+
+            # Predictions
+            self.predictions = tf.argmax(output, axis=2)
+            weights = tf.sequence_mask(self.sentence_lens, dtype=tf.float32)
+
+            # Training
+            loss = tf.losses.sparse_softmax_cross_entropy(self.tags, output, weights=weights)
+
+            global_step = tf.train.create_global_step()
+            self.training = tf.train.AdamOptimizer().minimize(loss, global_step=global_step, name="training")
 
             # Summaries
             self.current_accuracy, self.update_accuracy = tf.metrics.accuracy(self.tags, self.predictions, weights=weights)
@@ -122,9 +182,14 @@ if __name__ == "__main__":
 
     # Parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batch_size", default=None, type=int, help="Batch size.")
-    parser.add_argument("--epochs", default=None, type=int, help="Number of epochs.")
+    parser.add_argument("--batch_size", default=10, type=int, help="Batch size.")
+    parser.add_argument("--cle_dim", default=64, type=int, help="Character-level embedding dimension.")
+    parser.add_argument("--epochs", default=8, type=int, help="Number of epochs.")
+    parser.add_argument("--recodex", default=False, action="store_true", help="ReCodEx mode.")
+    parser.add_argument("--rnn_cell", default="LSTM", type=str, help="RNN cell type.")
+    parser.add_argument("--rnn_cell_dim", default=32, type=int, help="RNN cell dimension.")
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
+    parser.add_argument("--we_dim", default=128, type=int, help="Word embedding dimension.")
     args = parser.parse_args()
 
     # Create logdir name
