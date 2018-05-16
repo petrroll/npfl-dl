@@ -183,13 +183,13 @@ if __name__ == "__main__":
     # Parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", default=10, type=int, help="Batch size.")
-    parser.add_argument("--cle_dim", default=64, type=int, help="Character-level embedding dimension.")
-    parser.add_argument("--epochs", default=8, type=int, help="Number of epochs.")
+    parser.add_argument("--cle_dim", default=128, type=int, help="Character-level embedding dimension.")
+    parser.add_argument("--epochs", default=4, type=int, help="Number of epochs.")
     parser.add_argument("--recodex", default=False, action="store_true", help="ReCodEx mode.")
     parser.add_argument("--rnn_cell", default="LSTM", type=str, help="RNN cell type.")
-    parser.add_argument("--rnn_cell_dim", default=32, type=int, help="RNN cell dimension.")
+    parser.add_argument("--rnn_cell_dim", default=512, type=int, help="RNN cell dimension.")
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
-    parser.add_argument("--we_dim", default=128, type=int, help="Word embedding dimension.")
+    parser.add_argument("--we_dim", default=256, type=int, help="Word embedding dimension.")
     args = parser.parse_args()
 
     # Create logdir name
