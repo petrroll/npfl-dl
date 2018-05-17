@@ -69,6 +69,10 @@ if __name__ == "__main__":
         avg_reward = np.mean(rewards_history[-400:])
         eps = args.epsilon - (avg_reward / target_reward) * (args.epsilon - args.epsilon_final)
 
+        # precompute certain values
+        best_action_p = 1 - eps + (eps / env.actions)
+        others_actions_p = (eps / env.actions)
+
         if (avg_reward > treshold_reward):
             training = False
 
@@ -77,19 +81,19 @@ if __name__ == "__main__":
         for (state, action, reward) in reversed(episode):
 
             # Cumulates reward that these actions will get later in this episode
-            G = G + reward
+            G += reward
 
             # Compute the average reward for current state & action combination.
             # .. and update number of elements of elements the avg. is made of.
             avgReturnCoef = stateActionSeen[state, action]
             avgReturn[state, action] = ((avgReturn[state, action] * avgReturnCoef) + G) / (avgReturnCoef + 1)
-            stateActionSeen[state, action] = (avgReturnCoef + 1)
+            stateActionSeen[state, action] += 1
 
             # find the action with highest average return
             actWithHighestRew = np.argmax(avgReturn[state,:])
             for actionIndex in range(env.actions):
                 # update policy -> action with highest return (above) gets _static_ high probability all others low
-                newActionP = 1 - eps + (eps / env.actions) if actionIndex == actWithHighestRew else (eps / env.actions)        
+                newActionP = best_action_p if actionIndex == actWithHighestRew else others_actions_p        
                 policy[state, actionIndex] = newActionP
 
     # Perform last 100 evaluation episodes
