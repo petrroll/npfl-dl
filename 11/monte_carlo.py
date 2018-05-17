@@ -42,6 +42,13 @@ if __name__ == "__main__":
     avgReturn = np.zeros((env.states, env.actions), dtype=float)
     stateActionSeen = np.zeros((env.states, env.actions), dtype=int)
 
+    # 
+    # Could be improved with addition of automatic policy search resets after
+    # ..the learning process stops improving for certain number of episodes.
+    # ..only reinitialization of policy, avgReturn, stateActionSeen and some
+    # ..minot tweaks would be needed.
+    #
+
     # Training 
     training = True
     while training:
