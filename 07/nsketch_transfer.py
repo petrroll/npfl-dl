@@ -35,13 +35,25 @@ class Dataset:
 
 class Network:
     WIDTH, HEIGHT = 224, 224
+    LABELS = 250
 
     def __init__(self, threads, seed=42):
         # Create an empty graph and a session
         graph = tf.Graph()
         graph.seed = seed
-        self.session = tf.Session(graph = graph, config=tf.ConfigProto(inter_op_parallelism_threads=threads,
-                                                                       intra_op_parallelism_threads=threads))
+
+        self.session = tf.Session(graph = graph, config=tf.ConfigProto(
+            inter_op_parallelism_threads=threads, 
+            intra_op_parallelism_threads=threads, 
+            device_count=({'CPU' : 1, 'GPU' : 0} if args.forceCPU else {'CPU' : 1, 'GPU' : 1}), 
+            ))
+
+    def __create_cbn_layer(self, last_layer, filters, kernel_size, strides, padding):
+        last_layer = tf.layers.conv2d(last_layer, filters, kernel_size, strides, padding, activation=None, use_bias=False)
+        last_layer = tf.layers.batch_normalization(last_layer, training=self.is_training)
+        last_layer = tf.nn.relu(last_layer)
+
+        return last_layer
 
     def construct(self, args):
         with self.session.graph.as_default():
@@ -50,18 +62,57 @@ class Network:
             self.labels = tf.placeholder(tf.int64, [None], name="labels")
             self.is_training = tf.placeholder(tf.bool, [], name="is_training")
 
-            # Create NASNet
-            images = 2 * (tf.tile(tf.image.convert_image_dtype(self.images, tf.float32), [1, 1, 1, 3]) - 0.5)
+            converted_images = tf.image.convert_image_dtype(self.images, tf.float32)
+            encoded_images = 2 * (tf.tile(converted_images, [1, 1, 1, 3]) - 0.5)       
+
+            # Encoder layers
+            # WARNING: Causes errors on Nasnet checkpoint restoration -> skipped for now. 
+            # with tf.variable_scope("encoder"):
+            #    encoded_images = self.__create_cbn_layer(2*(converted_images - 0.5), 1, 3, 1, "same")
+                       
+            # Create nasnet
             with tf.contrib.slim.arg_scope(nets.nasnet.nasnet.nasnet_mobile_arg_scope()):
-                features, _ = nets.nasnet.nasnet.build_nasnet_mobile(images, num_classes=None, is_training=False)
+                features, _ = nets.nasnet.nasnet.build_nasnet_mobile(encoded_images, num_classes=None, is_training=False)
+            
+            # Enable retraining of certain layers (see graph for operation names / print-out via: https://stackoverflow.com/a/43703647/915609)
+            retrain_layers = []
+            for rtl in retrain_layers:
+                rtl_layer = tf.get_default_graph().get_operation_by_name(rtl)
+                rtl_layer.trainable = True
+            
             self.nasnet_saver = tf.train.Saver()
 
-            # TODO: Computation and training.
-            #
-            # The code below assumes that:
-            # - loss is stored in `self.loss`
-            # - training is stored in `self.training`
-            # - label predictions are stored in `self.predictions`
+            # Retrieve the tensor to use as input for decoder part of the network -> last conv network (see above on how to get it's name)
+            nasnet_output = tf.get_default_graph().get_tensor_by_name("final_layer/Relu:0")
+            
+            # Decoder layers
+            with tf.variable_scope("decoder"):             
+                # Adding own cbn layer slowed the network's progress significantly
+                # decoded_results = self.__create_cbn_layer(nasnet_output, 1, 64, 2, "same")
+                
+                # Using nasnet's convolution output actually performs worse than using features for our network (not enough data)
+                # flatten_decoded_result = tf.layers.flatten(nasnet_output)
+
+                # Prediction and output
+                # Adding own dense layer actually increased overfitting on our data after certain accuracy was achieved
+                # output_layer = tf.layers.dense(features, self.LABELS, activation=None, name="output_layer")
+                output_layer = features
+            
+            # Predictions
+            self.predictions = tf.argmax(output_layer, axis=1)
+
+            # Training
+            self.loss = tf.losses.sparse_softmax_cross_entropy(self.labels, output_layer, scope="loss")
+            global_step = tf.train.create_global_step()
+
+            update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+            trainable_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "encoder") + tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "decoder")
+
+            with tf.control_dependencies(update_ops):
+                #self.training_enc_dec = tf.train.AdamOptimizer().minimize(self.loss, 
+                    #var_list=trainable_vars , global_step=global_step, name="trainingDecoderEncoder")
+                self.training_full = tf.train.AdamOptimizer().minimize(self.loss, 
+                    global_step=global_step, name="trainingFull")
 
             # Summaries
             self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.labels, self.predictions), tf.float32))
@@ -85,8 +136,8 @@ class Network:
             # Load NASNet
             self.nasnet_saver.restore(self.session, args.nasnet)
 
-    def train_batch(self, images, labels):
-        self.session.run([self.training, self.summaries["train"]], {self.images: images, self.labels: labels, self.is_training: True})
+    def train_batch(self, images, labels, train_full = False):
+        self.session.run([self.training_full if train_full else self.training_enc_dec, self.summaries["train"]], {self.images: images, self.labels: labels, self.is_training: True})
 
     def evaluate(self, dataset_name, dataset, batch_size):
         loss, accuracy = 0, 0
@@ -120,10 +171,12 @@ if __name__ == "__main__":
 
     # Parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batch_size", default=None, type=int, help="Batch size.")
-    parser.add_argument("--epochs", default=None, type=int, help="Number of epochs.")
+    parser.add_argument("--batch_size", default=128, type=int, help="Batch size.")
+    parser.add_argument("--epochs", default=20, type=int, help="Number of epochs.")
     parser.add_argument("--nasnet", default="nets/nasnet/model.ckpt", type=str, help="NASNet checkpoint path.")
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
+    parser.add_argument("--forceCPU", default=False, type=bool, help="Force coputation graph on CPU.")
+    parser.add_argument("--accLimitTrainWhole", default=-0.1, type=float, help="Threshold of last epoch's dev accuracy to start training the whole network.")
     args = parser.parse_args()
 
     # Create logdir name
@@ -146,11 +199,13 @@ if __name__ == "__main__":
 
     # Train
     for i in range(args.epochs):
+        last_acc = 0.0
         while not train.epoch_finished():
             images, labels = train.next_batch(args.batch_size)
-            network.train_batch(images, labels)
+            network.train_batch(images, labels, last_acc >= args.accLimitTrainWhole)
 
-        network.evaluate("dev", dev, args.batch_size)
+        last_acc = network.evaluate("dev", dev, args.batch_size)
+        print("{:.2f}".format(last_acc))
 
     # Predict test data
     with open("{}/nsketch_transfer_test.txt".format(args.logdir), "w") as test_file:
