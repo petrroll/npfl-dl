@@ -55,6 +55,10 @@ class Network:
 
         return last_layer
 
+    def __create_cnn_layer(self, last_layer, filters, kernel_size, strides, padding):
+        last_layer = tf.layers.conv2d(last_layer, filters, kernel_size, strides, padding, activation=tf.nn.relu)
+        return last_layer
+
     def construct(self, args):
         with self.session.graph.as_default():
             # Inputs
@@ -68,7 +72,7 @@ class Network:
             # Encoder layers
             # WARNING: Causes errors on Nasnet checkpoint restoration -> skipped for now. 
             # with tf.variable_scope("encoder"):
-            #    encoded_images = self.__create_cbn_layer(2*(converted_images - 0.5), 1, 3, 1, "same")
+            #    encoded_images = self.__create_cbn_layer(2*(converted_images - 0.5), 3, 3, 1, "same")
                        
             # Create nasnet
             with tf.contrib.slim.arg_scope(nets.nasnet.nasnet.nasnet_mobile_arg_scope()):
@@ -87,15 +91,16 @@ class Network:
             
             # Decoder layers
             with tf.variable_scope("decoder"):             
-                # Adding own cbn layer slowed the network's progress significantly
-                # decoded_results = self.__create_cbn_layer(nasnet_output, 1, 64, 2, "same")
-                
+                # Adding own c[nb]n layer slowed the network's progress and/or increased overfitting
+                # decoded_results = self.__create_cnn_layer(nasnet_output, filters=32, kernel_size=3, strides=2, padding="same")
+                # decoded_results = self.__create_cnn_layer(decoded_results, filters=32, kernel_size=3, strides=2, padding="same")
+
                 # Using nasnet's convolution output actually performs worse than using features for our network (not enough data)
-                # flatten_decoded_result = tf.layers.flatten(nasnet_output)
+                # flatten_decoded_result = tf.layers.flatten(decoded_results)
 
                 # Prediction and output
                 # Adding own dense layer actually increased overfitting on our data after certain accuracy was achieved
-                # output_layer = tf.layers.dense(features, self.LABELS, activation=None, name="output_layer")
+                # output_layer = tf.layers.dense(flatten_decoded_result, self.LABELS, activation=None, name="output_layer")
                 output_layer = features
             
             # Predictions
@@ -109,8 +114,9 @@ class Network:
             trainable_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "encoder") + tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "decoder")
 
             with tf.control_dependencies(update_ops):
-                #self.training_enc_dec = tf.train.AdamOptimizer().minimize(self.loss, 
-                    #var_list=trainable_vars , global_step=global_step, name="trainingDecoderEncoder")
+                # Uncomment if decoder is non-empty
+                # self.training_enc_dec = tf.train.AdamOptimizer().minimize(self.loss, 
+                    # var_list=trainable_vars , global_step=global_step, name="trainingDecoderEncoder")
                 self.training_full = tf.train.AdamOptimizer().minimize(self.loss, 
                     global_step=global_step, name="trainingFull")
 
@@ -176,7 +182,7 @@ if __name__ == "__main__":
     parser.add_argument("--nasnet", default="nets/nasnet/model.ckpt", type=str, help="NASNet checkpoint path.")
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
     parser.add_argument("--forceCPU", default=False, type=bool, help="Force coputation graph on CPU.")
-    parser.add_argument("--accLimitTrainWhole", default=-0.1, type=float, help="Threshold of last epoch's dev accuracy to start training the whole network.")
+    parser.add_argument("--accLimitTrainWhole", default=0.6, type=float, help="Threshold of last epoch's dev accuracy to start training the whole network.")
     args = parser.parse_args()
 
     # Create logdir name
