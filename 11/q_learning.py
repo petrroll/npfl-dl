@@ -17,10 +17,10 @@ if __name__ == "__main__":
     parser.add_argument("--episodes", default=1000, type=int, help="Training episodes.")
     parser.add_argument("--render_each", default=0, type=int, help="Render some episodes.")
 
-    parser.add_argument("--alpha", default=0.1, type=float, help="Learning rate.")
-    parser.add_argument("--alpha_final", default=0.01, type=float, help="Final learning rate.")
-    parser.add_argument("--epsilon", default=0.1, type=float, help="Exploration factor.")
-    parser.add_argument("--epsilon_final", default=0.01, type=float, help="Final exploration factor.")
+    parser.add_argument("--alpha", default=0.5, type=float, help="Learning rate.")
+    parser.add_argument("--alpha_final", default=0.2, type=float, help="Final learning rate.")
+    parser.add_argument("--epsilon", default=0.35, type=float, help="Exploration factor.")
+    parser.add_argument("--epsilon_final", default=0.00000001, type=float, help="Final exploration factor.")
     parser.add_argument("--gamma", default=1.0, type=float, help="Discounting factor.")
     args = parser.parse_args()
 
@@ -33,7 +33,7 @@ if __name__ == "__main__":
     Q = np.zeros((env.states, env.actions))
 
     reward_history = []
-    reward_threshold = -120
+    reward_threshold = -130
     worst_reward = -1000
 
     reset_after_episoded = 5000
@@ -63,16 +63,20 @@ if __name__ == "__main__":
             episode_reward += reward
             state = next_state
 
+        # Record session results
         reward_history.append(episode_reward)
-        avg_reward = np.mean(reward_history[-400:])
+        avg_reward = np.mean(reward_history[-150:])
 
-        closeness_to_goal = (avg_reward - worst_reward) / (-worst_reward)
-        eps = args.epsilon_final + (1 - closeness_to_goal) * (args.epsilon - args.epsilon_final)
-        alpha = args.alpha_final + (1 - closeness_to_goal) * (args.alpha - args.alpha_final)
+        # Recalculate parameters
+        prog = episodes_since_reset  / reset_after_episoded
+        eps = np.exp(np.log(args.epsilon) * prog + np.log(args.epsilon_final) * (1-prog))
+        alpha = np.exp(np.log(args.alpha) * prog + np.log(args.alpha_final) * (1-prog))
 
+        # Stop learning if already ready to run
         if avg_reward > reward_threshold:
             training = False
 
+        # Reset if stuck for too long
         if episodes_since_reset > reset_after_episoded:
             episodes_since_reset = 0
             Q = np.zeros((env.states, env.actions))        
