@@ -20,10 +20,36 @@ class Network:
             self.phone_lens = tf.placeholder(tf.int32, [None])
             self.phones = tf.placeholder(tf.int32, [None, None])
 
+            # Create sparse repre for phonemes
+            idx = tf.where(tf.not_equal(self.phones, 0))
+            sparse_phones = tf.SparseTensor(idx, tf.gather_nd(self.phones, idx), tf.cast(tf.shape(self.phones), tf.int64)) # Can't explain casts to int64
+
+            # Bidir RNN to process mfccs and create phoneme sequences
+            bin_rnn_outputs, _ = tf.nn.bidirectional_dynamic_rnn(
+                tf.nn.rnn_cell.GRUCell(args.rnn_cell_dim), tf.nn.rnn_cell.GRUCell(args.rnn_cell_dim), 
+                self.mfccs, sequence_length = self.mfcc_lens, 
+                dtype=tf.float32)
+
+            # Concat fwd and bck, create output via linear layer without activation
+            rnn_outputs = tf.concat(bin_rnn_outputs, axis=2)
+            output = tf.layers.dense(rnn_outputs, num_phones + 1, activation=None)
+            output = tf.transpose(output, [1, 0, 2]) # loss and decoder expect [max_time, batch_size, ...] not [b_s, m_t, ...]
+
             # TODO: Computation and training. The rest of the template assumes
             # the following variables:
             # - `losses`: vector of losses, with an element for each example in the batch
             # - `edit_distances`: vector of edit distances, with an element for each batch example
+
+            # Produce losses and predictions 
+            losses = tf.nn.ctc_loss(sparse_phones, output, self.mfcc_lens)
+            predictions, _ = tf.nn.ctc_greedy_decoder(output, self.mfcc_lens)
+            predictions = predictions[0] # It's a single-element list
+
+            # Create dense predictions
+            self.predictions_dense = tf.sparse_to_dense(predictions.indices, predictions.dense_shape, predictions.values)
+
+            # Produce edit distance betweeen predictions and golden data
+            edit_distances = tf.edit_distance(predictions, tf.cast(sparse_phones, tf.int64))
 
             # Training
             global_step = tf.train.create_global_step()
@@ -67,8 +93,15 @@ class Network:
         return self.session.run([self.current_edit_distance, self.summaries[dataset_name]])[0]
 
     def predict(self, dataset, batch_size):
-        # TODO: Predict phoneme sequences for the given dataset.
+        phonemes = []
 
+        while not dataset.epoch_finished():
+            mfcc_lens, mfccs, _, _ = dataset.next_batch(batch_size)
+            phonemes_batch = self.session.run(self.predictions_dense,
+                             {self.mfcc_lens: mfcc_lens, self.mfccs: mfccs})
+            
+            phonemes.extend(phonemes_batch)
+        return phonemes
 
 if __name__ == "__main__":
     import argparse
@@ -81,9 +114,10 @@ if __name__ == "__main__":
 
     # Parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batch_size", default=None, type=int, help="Batch size.")
-    parser.add_argument("--epochs", default=None, type=int, help="Number of epochs.")
-    parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
+    parser.add_argument("--batch_size", default=10, type=int, help="Batch size.")
+    parser.add_argument("--epochs", default=10, type=int, help="Number of epochs.")
+    parser.add_argument("--threads", default=2, type=int, help="Maximum number of threads to use.")
+    parser.add_argument("--rnn_cell_dim", default=64, type=int, help="RNN cell dimension.")
     args = parser.parse_args()
 
     # Create logdir name
@@ -104,12 +138,19 @@ if __name__ == "__main__":
     # Train
     for i in range(args.epochs):
         network.train_epoch(timit.train, args.batch_size)
+        edit_distance = network.evaluate("dev", timit.dev, args.batch_size)
 
-        network.evaluate("dev", timit.dev, args.batch_size)
+        print("{:2f}".format(edit_distance))
+
+    phonemes = network.predict(timit.test, args.batch_size)
 
     # Predict test data
     with open("{}/speech_recognition_test.txt".format(args.logdir), "w") as test_file:
-
         # TODO: Predict phonemes for test set using network.predict(timit.test, args.batch_size)
         # and save them to `test_file`. Save the phonemes for each utterance on a single line,
         # separating them by a single space.
+        
+        for sentence in phonemes:
+            # Translate phonemes indexes to actual phonemes
+            translated_phonemes = [timit.phones[x] for x in sentence if not x == 0]
+            print(" ".join(translated_phonemes), file=test_file)
