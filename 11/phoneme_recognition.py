@@ -42,7 +42,7 @@ class Network:
 
             # Produce losses and predictions 
             losses = tf.nn.ctc_loss(sparse_phones, output, self.mfcc_lens)
-            predictions, _ = tf.nn.ctc_greedy_decoder(output, self.mfcc_lens)
+            predictions, _ = tf.nn.ctc_beam_search_decoder(output, self.mfcc_lens) if args.beam_decoding else tf.nn.ctc_greedy_decoder(output, self.mfcc_lens)
             predictions = predictions[0] # It's a single-element list
 
             # Create dense predictions
@@ -115,9 +115,11 @@ if __name__ == "__main__":
     # Parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", default=10, type=int, help="Batch size.")
-    parser.add_argument("--epochs", default=10, type=int, help="Number of epochs.")
+    parser.add_argument("--epochs", default=20, type=int, help="Number of epochs.")
     parser.add_argument("--threads", default=2, type=int, help="Maximum number of threads to use.")
     parser.add_argument("--rnn_cell_dim", default=64, type=int, help="RNN cell dimension.")
+    parser.add_argument("--beam_decoding", default=False, type=bool, help="Use beam decoding instead of greedy (slower, better).")
+
     args = parser.parse_args()
 
     # Create logdir name
@@ -140,7 +142,7 @@ if __name__ == "__main__":
         network.train_epoch(timit.train, args.batch_size)
         edit_distance = network.evaluate("dev", timit.dev, args.batch_size)
 
-        print("{:2f}".format(edit_distance))
+        print("{}|{:.2f}".format(i, edit_distance))
 
     phonemes = network.predict(timit.test, args.batch_size)
 
