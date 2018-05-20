@@ -158,6 +158,7 @@ if __name__ == "__main__":
 
     # Predict test data
     def predict(acc):
+        phonemes = network.predict(timit.test, args.batch_size)
         with open("{}/speech_recognition_test_{:.4f}.txt".format(args.logdir, acc), "w") as test_file:        
             for sentence in phonemes:
                 # Translate phonemes indexes to actual phonemes
@@ -175,6 +176,5 @@ if __name__ == "__main__":
             best_acc = edit_distance
             predict(edit_distance)
 
-    phonemes = network.predict(timit.test, args.batch_size)
 
 
