@@ -24,10 +24,23 @@ class Network:
             idx = tf.where(tf.not_equal(self.phones, 0))
             sparse_phones = tf.SparseTensor(idx, tf.gather_nd(self.phones, idx), tf.cast(tf.shape(self.phones), tf.int64)) # Can't explain casts to int64
 
+            # Prepend one bidirRNN.
+            if args.two_layers:
+                with tf.variable_scope("optional_rnn"):
+                    bin_rnn_outputs_opt, _ = tf.nn.bidirectional_dynamic_rnn(
+                     tf.nn.rnn_cell.GRUCell(args.rnn_cell_dim), tf.nn.rnn_cell.GRUCell(args.rnn_cell_dim), 
+                     self.mfccs, sequence_length = self.mfcc_lens, 
+                     dtype=tf.float32)
+
+                rnn_input = tf.concat(bin_rnn_outputs_opt, axis=2) # doubling the dimensionality 
+            else:
+                rnn_input = self.mfccs
+
+
             # Bidir RNN to process mfccs and create phoneme sequences
             bin_rnn_outputs, _ = tf.nn.bidirectional_dynamic_rnn(
                 tf.nn.rnn_cell.GRUCell(args.rnn_cell_dim), tf.nn.rnn_cell.GRUCell(args.rnn_cell_dim), 
-                self.mfccs, sequence_length = self.mfcc_lens, 
+                rnn_input, sequence_length = self.mfcc_lens, 
                 dtype=tf.float32)
 
             # Concat fwd and bck, create output via linear layer without activation
@@ -119,6 +132,7 @@ if __name__ == "__main__":
     parser.add_argument("--threads", default=2, type=int, help="Maximum number of threads to use.")
     parser.add_argument("--rnn_cell_dim", default=64, type=int, help="RNN cell dimension.")
     parser.add_argument("--beam_decoding", default=False, type=bool, help="Use beam decoding instead of greedy (slower, better).")
+    parser.add_argument("--two_layers", default=False, type=bool, help="Use two bidirRNN layers.")
 
     args = parser.parse_args()
 
