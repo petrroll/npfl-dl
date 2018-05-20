@@ -58,8 +58,12 @@ class Network:
             predictions, _ = tf.nn.ctc_beam_search_decoder(output, self.mfcc_lens) if args.beam_decoding else tf.nn.ctc_greedy_decoder(output, self.mfcc_lens)
             predictions = predictions[0] # It's a single-element list
 
-            # Create dense predictions
-            self.predictions_dense = tf.sparse_to_dense(predictions.indices, predictions.dense_shape, predictions.values)
+            # Better prediction for inference
+            beam_predictions, _ = tf.nn.ctc_beam_search_decoder(output, self.mfcc_lens)
+            beam_predictions = beam_predictions[0] 
+
+            # Create dense predictions, used for inference
+            self.predictions_dense = tf.sparse_to_dense(beam_predictions.indices, beam_predictions.dense_shape, beam_predictions.values)
 
             # Produce edit distance betweeen predictions and golden data
             edit_distances = tf.edit_distance(predictions, tf.cast(sparse_phones, tf.int64))
@@ -127,12 +131,12 @@ if __name__ == "__main__":
 
     # Parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batch_size", default=10, type=int, help="Batch size.")
+    parser.add_argument("--batch_size", default=16, type=int, help="Batch size.")
     parser.add_argument("--epochs", default=20, type=int, help="Number of epochs.")
     parser.add_argument("--threads", default=2, type=int, help="Maximum number of threads to use.")
-    parser.add_argument("--rnn_cell_dim", default=64, type=int, help="RNN cell dimension.")
-    parser.add_argument("--beam_decoding", default=False, type=bool, help="Use beam decoding instead of greedy (slower, better).")
-    parser.add_argument("--two_layers", default=False, type=bool, help="Use two bidirRNN layers.")
+    parser.add_argument("--rnn_cell_dim", default=256, type=int, help="RNN cell dimension.")
+    parser.add_argument("--beam_decoding", default=False, type=bool, help="Use beam decoding instead of greedy (slower, better) for train & dev.")
+    parser.add_argument("--two_layers", default=True, type=bool, help="Use two bidirRNN layers.")
 
     args = parser.parse_args()
 
@@ -151,22 +155,26 @@ if __name__ == "__main__":
     network = Network(threads=args.threads)
     network.construct(args, len(timit.phones), timit.mfcc_dim)
 
+
+    # Predict test data
+    def predict(acc):
+        with open("{}/speech_recognition_test_{:.4f}.txt".format(args.logdir, acc), "w") as test_file:        
+            for sentence in phonemes:
+                # Translate phonemes indexes to actual phonemes
+                translated_phonemes = [timit.phones[x] for x in sentence if not x == 0]
+                print(" ".join(translated_phonemes), file=test_file)
+
     # Train
+    best_acc = 0.6
     for i in range(args.epochs):
         network.train_epoch(timit.train, args.batch_size)
         edit_distance = network.evaluate("dev", timit.dev, args.batch_size)
 
         print("{}|{:.2f}".format(i, edit_distance))
+        if edit_distance < best_acc:
+            best_acc = edit_distance
+            predict(edit_distance)
 
     phonemes = network.predict(timit.test, args.batch_size)
 
-    # Predict test data
-    with open("{}/speech_recognition_test.txt".format(args.logdir), "w") as test_file:
-        # TODO: Predict phonemes for test set using network.predict(timit.test, args.batch_size)
-        # and save them to `test_file`. Save the phonemes for each utterance on a single line,
-        # separating them by a single space.
-        
-        for sentence in phonemes:
-            # Translate phonemes indexes to actual phonemes
-            translated_phonemes = [timit.phones[x] for x in sentence if not x == 0]
-            print(" ".join(translated_phonemes), file=test_file)
+
