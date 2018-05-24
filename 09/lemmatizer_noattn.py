@@ -19,67 +19,98 @@ class Network:
 
             # Inputs
             self.sentence_lens = tf.placeholder(tf.int32, [None], name="sentence_lens")
-            self.source_ids = tf.placeholder(tf.int32, [None, None], name="source_ids")
-            self.source_seqs = tf.placeholder(tf.int32, [None, None], name="source_seqs")
-            self.source_seq_lens = tf.placeholder(tf.int32, [None], name="source_seq_lens")
-            self.target_ids = tf.placeholder(tf.int32, [None, None], name="target_ids")
-            self.target_seqs = tf.placeholder(tf.int32, [None, None], name="target_seqs")
-            self.target_seq_lens = tf.placeholder(tf.int32, [None], name="target_seq_lens")
+            # Inputs words
+            self.source_ids = tf.placeholder(tf.int32, [None, None], name="source_ids") # Sent. -> word ids
+            self.source_seqs = tf.placeholder(tf.int32, [None, None], name="source_seqs") # Word seqs
+            self.source_seq_lens = tf.placeholder(tf.int32, [None], name="source_seq_lens") # Word seqs lens
+            # lemmas
+            self.target_ids = tf.placeholder(tf.int32, [None, None], name="target_ids") # Sent. -> lemma ids
+            self.target_seqs = tf.placeholder(tf.int32, [None, None], name="target_seqs") # Lemma seqs
+            self.target_seq_lens = tf.placeholder(tf.int32, [None], name="target_seq_lens") # Lemma seqs lens
 
             # Append EOW after target_seqs
             target_seqs = tf.reverse_sequence(self.target_seqs, self.target_seq_lens, 1)
             target_seqs = tf.pad(target_seqs, [[0, 0], [1, 0]], constant_values=eow)
             target_seq_lens = self.target_seq_lens + 1
             target_seqs = tf.reverse_sequence(target_seqs, target_seq_lens, 1)
-
+            
+            #
             # Encoder
+            #
+            
             # TODO: Generate source embeddings for source chars, of shape [source_chars, args.char_dim].
+            source_embeddings = tf.get_variable("source_embdgs", [source_chars, args.char_dim])
 
             # TODO: Embed the self.source_seqs using the source embeddings.
+            source_embedded = tf.nn.embedding_lookup(source_embeddings, self.source_seqs)
 
             # TODO: Using a GRU with dimension args.rnn_dim, process the embedded self.source_seqs
             # using forward RNN and store the resulting states into `source_states`.
+            _, source_states = tf.nn.dynamic_rnn(
+                cell=tf.nn.rnn_cell.GRUCell(args.rnn_dim),
+                inputs=source_embedded,
+                dtype=tf.float32,
+                sequence_length=self.source_seq_lens
+            )
 
             # Index the unique words using self.source_ids and self.target_ids.
             sentence_mask = tf.sequence_mask(self.sentence_lens)
+            # States for processed words from current batch
             source_states = tf.boolean_mask(tf.nn.embedding_lookup(source_states, self.source_ids), sentence_mask)
             source_lens = tf.boolean_mask(tf.nn.embedding_lookup(self.source_seq_lens, self.source_ids), sentence_mask)
-
+            # Lemmas for batched words
             target_seqs = tf.boolean_mask(tf.nn.embedding_lookup(target_seqs, self.target_ids), sentence_mask)
             target_lens = tf.boolean_mask(tf.nn.embedding_lookup(target_seq_lens, self.target_ids), sentence_mask)
 
+            #
             # Decoder
+            #
+
             # TODO: Generate target embeddings for target chars, of shape [target_chars, args.char_dim].
+            target_embeddings = tf.get_variable("target_embdgs", [target_chars, args.char_dim])
 
             # TODO: Embed the target_seqs using the target embeddings.
+            target_embedded = tf.nn.embedding_lookup(target_embeddings, target_seqs)
 
             # TODO: Generate a decoder GRU with wimension args.rnn_dim.
+            decoder_rnn_cell = tf.nn.rnn_cell.GRUCell(args.rnn_dim)
 
             # TODO: Create a `decoder_layer` -- a fully connected layer with
             # target_chars neurons used in the decoder to classify into target characters.
+            decoder_layer = tf.layers.Dense(target_chars)
 
             # The DecoderTraining will be used during training. It will output logits for each
             # target character.
             class DecoderTraining(tf.contrib.seq2seq.Decoder):
                 @property
-                def batch_size(self): return # TODO: Return size of the batch, using for example source_states size
+                def batch_size(self): return tf.shape(source_states)[0] # TODO: Return size of the batch, using for example source_states size
                 @property
                 def output_dtype(self): return tf.float32 # Type for logits of target characters
                 @property
                 def output_size(self): return target_chars # Length of logits for every output
 
                 def initialize(self, name=None):
-                    finished = # TODO: False if target_lens > 0, True otherwise
-                    states = # TODO: Initial decoder state to use
-                    inputs = # TODO: embedded BOW characters of shape [self.batch_size] using target embeddings.
-                             # You can use tf.fill to generate BOWs of appropriate size.
+                    # TODO: False if target_lens > 0, True otherwise
+                    finished = tf.less_equal(target_lens, 0) 
+                    # TODO: Initial decoder state to use
+                    states = source_states 
+                    # TODO: embedded BOW characters of shape [self.batch_size] using target embeddings.
+                    # You can use tf.fill to generate BOWs of appropriate size.
+                    bows = tf.fill([self.batch_size], bow)
+                    inputs = tf.nn.embedding_lookup(target_embeddings, bows)    
+
                     return finished, inputs, states
 
                 def step(self, time, inputs, states, name=None):
-                    outputs, states = # TODO: Run the decoder GRU cell using inputs and states.
-                    outputs = # TODO: Apply the decoder_layer on outputs.
-                    next_input = # TODO: Next input are character embeddings with index `time` in target_embedded.
-                    finished = # TODO: False if target_lens > time + 1, True otherwise.
+                    # TODO: Run the decoder GRU cell using inputs and states.
+                    outputs, states = decoder_rnn_cell(inputs, states) 
+                    # TODO: Apply the decoder_layer on outputs.
+                    outputs = decoder_layer(outputs) 
+                    # TODO: Next input are character embeddings with index `time` in target_embedded (+1 is provided by added bow char).
+                    next_input = tf.gather(target_embedded, time, axis=1) 
+                    # TODO: False if target_lens > time + 1, True otherwise.
+                    finished = tf.less_equal(target_lens, time + 1)
+
                     return outputs, states, next_input, finished
             output_layer, _, _ = tf.contrib.seq2seq.dynamic_decode(DecoderTraining())
             self.predictions_training = tf.argmax(output_layer, axis=2, output_type=tf.int32)
@@ -88,31 +119,45 @@ class Network:
             # directly output the predicted target characters.
             class DecoderPrediction(tf.contrib.seq2seq.Decoder):
                 @property
-                def batch_size(self): return # TODO: Return size of the batch, using for example source_states size
+                def batch_size(self): return tf.shape(source_states)[0] # TODO: Return size of the batch, using for example source_states size
                 @property
                 def output_dtype(self): return tf.int32 # Type for predicted target characters
                 @property
                 def output_size(self): return 1 # Will return just one output
 
                 def initialize(self, name=None):
-                    finished = # TODO: False of shape [self.batch_size].
-                    states = # TODO: Initial decoder state to use.
-                    inputs = # TODO: embedded BOW characters of shape [self.batch_size] using target embeddings.
-                             # You can use tf.fill to generate BOWs of appropriate size.
+                    # TODO: False of shape [self.batch_size].
+                    finished = tf.fill([self.batch_size], False) 
+                    # TODO: Initial decoder state to use.
+                    states = source_states
+                    # TODO: embedded BOW characters of shape [self.batch_size] using target embeddings.
+                    # You can use tf.fill to generate BOWs of appropriate size.
+                    bows = tf.fill([self.batch_size], bow)
+                    inputs = tf.nn.embedding_lookup(target_embeddings, bows)    
+
                     return finished, inputs, states
 
                 def step(self, time, inputs, states, name=None):
-                    outputs, states = # TODO: Run the decoder GRU cell using inputs and states.
-                    outputs = # TODO: Apply the decoder_layer on outputs.
-                    outputs = # TODO: Use tf.argmax to choose most probable class (supply parameter `output_type=tf.int32`).
-                    next_input = # TODO: Embed `outputs` using target_embeddings
-                    finished = # TODO: True where outputs==eow, False otherwise
-                               # Use tf.equal for the comparison, Python's '==' is not overloaded
+                    # TODO: Run the decoder GRU cell using inputs and states.
+                    outputs, states = decoder_rnn_cell(inputs, states) 
+                    # TODO: Apply the decoder_layer on outputs.
+                    outputs = decoder_layer(outputs) 
+                    # TODO: Use tf.argmax to choose most probable class (supply parameter `output_type=tf.int32`).
+                    outputs = tf.argmax(outputs, axis=1, output_type = tf.int32)
+                     # TODO: Embed `outputs` using target_embeddings
+                    next_input = tf.nn.embedding_lookup(target_embeddings, outputs)
+                    # TODO: True where outputs==eow, False otherwise
+                    # Use tf.equal for the comparison, Python's '==' is not overloaded
+                    finished = tf.equal(outputs, eow)
+
                     return outputs, states, next_input, finished
             self.predictions, _, self.prediction_lens = tf.contrib.seq2seq.dynamic_decode(
                 DecoderPrediction(), maximum_iterations=tf.reduce_max(source_lens) + 10)
-
+            
+            #
             # Training
+            #
+            
             weights = tf.sequence_mask(target_lens, dtype=tf.float32)
             loss = tf.losses.sparse_softmax_cross_entropy(target_seqs, output_layer, weights=weights)
             global_step = tf.train.create_global_step()
