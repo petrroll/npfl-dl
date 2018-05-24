@@ -94,14 +94,14 @@ class Network:
             # ..as input for next element in decoded sequence.
             def with_attention(inputs, states):
                 # TODO: Project source_encoded using source_layer.
-                projected_source = source_layer(source_encoded)
+                projected_encd_source = source_layer(source_encoded)
 
                 # TODO: Change shape of states from [a, b] to [a, 1, b] and project it using state_layer.
-                projected_states = state_layer(tf.expand_dims(source_states, 1))
+                projected_dec_states = state_layer(tf.expand_dims(states, 1))
 
                 # TODO: Sum the two above projections, apply tf.tanh and project the result using weight_layer.
                 # The result has shape [x, y, 1].
-                proj_state_source = tf.add(projected_source, projected_states)
+                proj_state_source = tf.add(projected_encd_source, projected_dec_states)
                 weights = weight_layer(tf.tanh(proj_state_source))
 
                 # TODO: Apply tf.nn.softmax to the latest result, using axis corresponding to source characters.
