@@ -36,6 +36,8 @@ if __name__ == "__main__":
     reward_threshold = -130
     worst_reward = -1000
 
+    gamma = 0.99
+
     reset_after_episoded = 5000
     episodes_since_reset = 0
 
@@ -58,7 +60,7 @@ if __name__ == "__main__":
 
             # Update the state-action value function for the original state and selected action with
             # ..reward and the potential improvement of new state in comparison to the original one.
-            Q[state, action] += alpha*( reward + (np.max(Q[next_state, :]) - Q[state, action]) ) 
+            Q[state, action] += alpha*( reward + (gamma*np.max(Q[next_state, :]) - Q[state, action]) ) 
 
             episode_reward += reward
             state = next_state
