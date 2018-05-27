@@ -25,17 +25,21 @@ class Network:
 
             # TODO: Add a fully connected layer processing self.states, with args.hidden_layer neurons
             # and some non-linear activatin.
+            compute_layer = tf.layers.dense(self.states, args.hidden_layer, activation=tf.nn.relu)            
 
             # TODO: Compute `logits` using another dense layer with
             # `num_actions` outputs (utilizing no activation function).
+            logits = tf.layers.dense(compute_layer, num_actions)
 
             # TODO: Compute the `self.probabilities` from the `logits`.
+            self.probabilities = tf.nn.softmax(logits)
 
             # Training
 
             # TODO: Compute `loss`, as a softmax cross entropy loss of self.actions and `logits`.
             # Because this is a REINFORCE algorithm, it is crucial to weight the loss of batch
             # elements using `self.returns` -- this can be accomplished using the `weights` parameter.
+            loss = tf.losses.sparse_softmax_cross_entropy(self.actions, logits, weights=self.returns)
 
             global_step = tf.train.create_global_step()
             self.training = tf.train.AdamOptimizer(args.learning_rate).minimize(loss, global_step=global_step, name="training")
@@ -44,7 +48,8 @@ class Network:
             self.session.run(tf.global_variables_initializer())
 
     def predict(self, states):
-        return self.session.run(self.probabilities, {self.states: states})
+        # We're predicting only one action for one state -> the batch is always of length 1
+        return self.session.run(self.probabilities, {self.states: states})[0]
 
     def train(self, states, actions, returns):
         self.session.run(self.training, {self.states: states, self.actions: actions, self.returns: returns})
@@ -57,12 +62,13 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", default=5, type=int, help="Number of episodes to train on.")
-    parser.add_argument("--episodes", default=500, type=int, help="Training episodes.")
-    parser.add_argument("--gamma", default=1.0, type=float, help="Discounting factor.")
-    parser.add_argument("--hidden_layer", default=20, type=int, help="Size of hidden layer.")
+    parser.add_argument("--episodes", default=1000, type=int, help="Training episodes.")
+    parser.add_argument("--gamma", default=0.999, type=float, help="Discounting factor.")
+    parser.add_argument("--hidden_layer", default=256, type=int, help="Size of hidden layer.")
     parser.add_argument("--learning_rate", default=0.01, type=float, help="Learning rate.")
     parser.add_argument("--render_each", default=0, type=int, help="Render some episodes.")
-    parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
+    parser.add_argument("--threads", default=2, type=int, help="Maximum number of threads to use.")
+    parser.add_argument("--debug", default=False, type=bool, help="Enable debug outputs.")
     args = parser.parse_args()
 
     # Create the environment
@@ -72,38 +78,79 @@ if __name__ == "__main__":
     network = Network(threads=args.threads)
     network.construct(args, env.state_shape, env.actions)
 
+    reward_history = []
+    reward_threshold = 490
+    reward_mean_length = 100
+
+    episodes_since_reset = 0
+
+    def try_render_episode(env, args):
+        if args.render_each and env.episode > 0 and env.episode % args.render_each == 0:
+            env.render()
+
+
     evaluating = False
     while True:
-        # TODO: Decide if evaluation should start (one possibility is to train for args.episodes,
-        # so env.episode >= args.episodes could be used).
-        evaluation = ...
 
         # Train for a batch of episodes
         batch_states, batch_actions, batch_returns = [], [], []
         for _ in range(args.batch_size):
+            
             # Perform episode
+            episodes_since_reset += 1
+            episode_reward = 0
+
             state = env.reset(evaluating)
             states, actions, rewards, done = [], [], [], False
             while not done:
-                if args.render_each and env.episode > 0 and env.episode % args.render_each == 0:
-                    env.render()
+                try_render_episode(env, args)
 
-                # TODO: Compute action distribution using `network.predict`
+                # Compute action distribution using the network
+                actions_distrib = network.predict([state])
 
-                # TODO: Set `action` randomly according to the generated distribution
-                # (you can use np.random.choice or any other method).
-                action = ...
+                # Choose action based on predicted distribution for current state                
+                action = np.random.choice(env.actions, p=actions_distrib)
 
+                # Perform one step
                 next_state, reward, done, _ = env.step(action)
 
-                # TODO: Accumulate states, actions and rewards.
+                # Accumulate states, actions and rewards for current episode.
+                states.append(state)
+                actions.append(action)
+                rewards.append(reward)
 
+                episode_reward += reward
                 state = next_state
 
-            # TODO: Compute returns from rewards (by summing them up and
-            # applying discount by `args.gamma`).
+            # Compute returns from rewards (by summing them up and applying discount by `args.gamma`).
+            accumul_reward = 0
+            returns = np.zeros_like(rewards)
+            for i in range(1, len(returns)+1):
+                accumul_reward = accumul_reward * args.gamma + rewards[-i]
+                returns[-i] = accumul_reward
 
-            # TODO: Extend the batch_{states,actions,returns} using the episodic
-            # {states,actions,returns}.
+            # Record episode run to current batch
+            batch_states.extend(states)
+            batch_actions.extend(actions)
+            batch_returns.extend(returns)
 
-        # TODO: Perform network training using batch_{states,actions,returns}.
+            # Record episode results
+            reward_history.append(episode_reward)
+            avg_reward = np.mean(reward_history[-reward_mean_length:])
+            
+        # Stop learning if already ready to run -> start evaluating
+        if avg_reward > reward_threshold and not evaluating:
+            if args.debug: print("EVAL")
+            evaluating = True
+
+        # Reset if stuck for too long
+        if episodes_since_reset > args.episodes and not evaluating:
+            if args.debug: print("RESET")
+            network = Network(threads=args.threads)
+            network.construct(args, env.state_shape, env.actions)
+
+            episodes_since_reset = 0
+
+        # Perform network training using recorded batched episodes & their returns.
+        if not evaluating:
+            network.train(batch_states, batch_actions, batch_returns)
