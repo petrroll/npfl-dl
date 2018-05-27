@@ -38,7 +38,7 @@ class Network:
             # args.hidden_layer outputs using some non-linear activation, and then employing another
             # densely connected layer with one output and no activation. Modify the result to have
             # shape `[batch_size]` (you can use for example `[:, 0]`, see the overloaded `Tensor.__getitem__` method).
-            baseline_compute_layer = tf.layers.dense(self.states, args.hidden_layer, activation=tf.nn.relu)
+            baseline_compute_layer = tf.layers.dense(self.states, args.hidden_layer_baseline, activation=tf.nn.relu)
             baseline_return = tf.layers.dense(baseline_compute_layer, 1, activation=tf.nn.relu)[:, 0]
 
             # Training
@@ -71,16 +71,17 @@ class Network:
 
 if __name__ == "__main__":
     # Fix random seed
-    np.random.seed(42)
+    #np.random.seed(42)
 
     # Parse arguments
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", default=5, type=int, help="Number of episodes to train on.")
     parser.add_argument("--episodes", default=200, type=int, help="Training episodes.")
-    parser.add_argument("--gamma", default=0.999, type=float, help="Discounting factor.")
-    parser.add_argument("--hidden_layer", default=256, type=int, help="Size of hidden layer.")
-    parser.add_argument("--learning_rate", default=0.01, type=float, help="Learning rate.")
+    parser.add_argument("--gamma", default=0.9999, type=float, help="Discounting factor.")
+    parser.add_argument("--hidden_layer", default=512, type=int, help="Size of hidden layer.")
+    parser.add_argument("--hidden_layer_baseline", default=512, type=int, help="Size of hidden layer.")
+    parser.add_argument("--learning_rate", default=0.015, type=float, help="Learning rate.")
     parser.add_argument("--render_each", default=0, type=int, help="Render some episodes.")
     parser.add_argument("--threads", default=2, type=int, help="Maximum number of threads to use.")
     args = parser.parse_args()
@@ -91,6 +92,12 @@ if __name__ == "__main__":
     # Construct the network
     network = Network(threads=args.threads)
     network.construct(args, env.state_shape, env.actions)
+    
+    reward_history = []
+    reward_threshold = 490
+    reward_threshold_train = 480
+    reward_mean_length = 100
+
 
     def try_render_episode(env, args):
         if args.render_each and env.episode > 0 and env.episode % args.render_each == 0:
@@ -104,6 +111,7 @@ if __name__ == "__main__":
         batch_states, batch_actions, batch_returns = [], [], []
         for _ in range(args.batch_size):
             # Perform episode
+            episode_reward = 0
             state = env.reset(evaluating)
             states, actions, rewards, done = [], [], [], False
             while not done:
@@ -123,6 +131,7 @@ if __name__ == "__main__":
                 actions.append(action)
                 rewards.append(reward)
 
+                episode_reward += reward
                 state = next_state
 
             # Compute returns from rewards (by summing them up and applying discount by `args.gamma`).
@@ -137,6 +146,14 @@ if __name__ == "__main__":
             batch_actions.extend(actions)
             batch_returns.extend(returns)
 
+            # Record episode results
+            reward_history.append(episode_reward)
+            avg_reward = np.mean(reward_history[-reward_mean_length:])
+
+        # Stop learning if already ready to run -> start evaluating
+        if avg_reward > reward_threshold and not evaluating:
+            evaluating = True
+
         # Perform network training using recorded batched episodes & their returns.
-        if not evaluating:
+        if not evaluating or avg_reward < reward_threshold_train:
             network.train(batch_states, batch_actions, batch_returns)
