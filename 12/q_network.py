@@ -138,7 +138,7 @@ if __name__ == "__main__":
             evaluating = True
 
         # Reset if stuck for too long
-        if episodes_since_reset > args.episodes:
+        if episodes_since_reset > args.episodes and not evaluating:
             if args.debug: print("RESET")
             network = Network(threads=args.threads)
             network.construct(args, env.states, env.actions)
