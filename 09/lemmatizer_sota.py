@@ -176,7 +176,7 @@ class Network:
                     # TODO: Run the decoder GRU cell using inputs and states.
                     outputs, states = decoder_rnn_cell(inputs, states)
                     # TODO: Apply the decoder_layer on outputs.
-                    outputs = decoder_layer_drop(decoder_layer(outputs), training=is_training)
+                    outputs = decoder_layer(decoder_layer_drop(outputs, training=is_training))
                     # TODO: Next input is with_attention called on character embeddings
                     # with index `time` in target_embedded.
                     last_output = tf.gather(target_embedded, time, axis=1)
