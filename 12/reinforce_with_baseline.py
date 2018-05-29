@@ -39,7 +39,7 @@ class Network:
             # densely connected layer with one output and no activation. Modify the result to have
             # shape `[batch_size]` (you can use for example `[:, 0]`, see the overloaded `Tensor.__getitem__` method).
             baseline_compute_layer = tf.layers.dense(self.states, args.hidden_layer_baseline, activation=tf.nn.relu)
-            baseline_return = tf.layers.dense(baseline_compute_layer, 1, activation=tf.nn.relu)[:, 0]
+            baseline_return = tf.layers.dense(baseline_compute_layer, 1, activation=None)[:, 0]
 
             # Training
 
@@ -76,12 +76,12 @@ if __name__ == "__main__":
     # Parse arguments
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batch_size", default=5, type=int, help="Number of episodes to train on.")
+    parser.add_argument("--batch_size", default=1, type=int, help="Number of episodes to train on.")
     parser.add_argument("--episodes", default=200, type=int, help="Training episodes.")
-    parser.add_argument("--gamma", default=0.9999, type=float, help="Discounting factor.")
-    parser.add_argument("--hidden_layer", default=512, type=int, help="Size of hidden layer.")
-    parser.add_argument("--hidden_layer_baseline", default=512, type=int, help="Size of hidden layer.")
-    parser.add_argument("--learning_rate", default=0.015, type=float, help="Learning rate.")
+    parser.add_argument("--gamma", default=1, type=float, help="Discounting factor.")
+    parser.add_argument("--hidden_layer", default=20, type=int, help="Size of hidden layer.")
+    parser.add_argument("--hidden_layer_baseline", default=20, type=int, help="Size of hidden layer.")
+    parser.add_argument("--learning_rate", default=0.01, type=float, help="Learning rate.")
     parser.add_argument("--render_each", default=0, type=int, help="Render some episodes.")
     parser.add_argument("--threads", default=2, type=int, help="Maximum number of threads to use.")
     args = parser.parse_args()
@@ -95,7 +95,6 @@ if __name__ == "__main__":
     
     reward_history = []
     reward_threshold = 490
-    reward_threshold_train = 480
     reward_mean_length = 100
 
 
@@ -120,8 +119,8 @@ if __name__ == "__main__":
                 # Compute action distribution using the network
                 actions_distrib = network.predict([state])
 
-                # Choose action based on predicted distribution for current state                
-                action = np.random.choice(env.actions, p=actions_distrib)
+                # Choose action based on predicted distribution for current state                       
+                action = np.argmax(actions_distrib) if evaluating else np.random.choice(env.actions, p=actions_distrib)
                 
                 # Perform one step
                 next_state, reward, done, _ = env.step(action)
@@ -155,5 +154,5 @@ if __name__ == "__main__":
             evaluating = True
 
         # Perform network training using recorded batched episodes & their returns.
-        if not evaluating or avg_reward < reward_threshold_train:
+        if not evaluating:
             network.train(batch_states, batch_actions, batch_returns)
