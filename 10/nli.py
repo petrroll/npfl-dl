@@ -84,7 +84,9 @@ class Network:
                 max4 = tf.layers.max_pooling1d(conv3, pool_size=5, strides=5, )
 
                 # Reduces current [batch, sentence_length, repre_dim] -> [batch, repre_dim]
-                sentence_repre = tf.reduce_mean(max4, axis=1)
+                sent_lengths = tf.tile(tf.expand_dims(tf.cast(self.sentence_lens, tf.float32), -1), [1, 2*args.conv_filters])
+                sent_summed_states = tf.reduce_sum(max4, axis=1)
+                sentence_repre = tf.divide(sent_summed_states, sent_lengths)
 
 
 
@@ -176,7 +178,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", default=32, type=int, help="Batch size.")
     parser.add_argument("--epochs", default=40, type=int, help="Number of epochs.")
-    parser.add_argument("--threads", default=3, type=int, help="Maximum number of threads to use.")
+    parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
     parser.add_argument("--we_dim", default=128, type=int, help="Word embedding dimension.")
     parser.add_argument("--cle_dim", default=128, type=int, help="Character-level embedding dimension.")
     parser.add_argument("--rnn_dim", default=64, type=int, help="RNN cell dimension.")
