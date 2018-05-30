@@ -32,17 +32,27 @@ class Network:
                 # Using the last hidden layer output, produce two vectors of size self.z_dim,
                 # using two dense layers without activation, the first being `z_mean` and the second
                 # `z_log_variance`.
+                flatten = tf.layers.flatten(image)
+                dense_1 = tf.layers.dense(flatten, 500, activation=tf.nn.relu)
+                dense_2 = tf.layers.dense(dense_1, 500, activation=tf.nn.relu)
+
+                z_mean = tf.layers.dense(dense_2, self.z_dim, activation=None)
+                z_log_variance = tf.layers.dense(dense_2, self.z_dim, activation=None)
+
                 return z_mean, z_log_variance
 
             z_mean, z_log_variance = encoder(self.images)
 
             # TODO: Compute `z_sd` as a standard deviation from `z_log_variance`, by passing
             # `z_log_variance` / 2 to an exponential function.
+            z_sd = tf.exp(z_log_variance / 2) # /2 is to get squared root of std-div
 
             # TODO: Compute `epsilon` as a random normal noise, with a shape of `z_mean`.
+            epsilon = tf.random_normal(shape=tf.shape(z_mean))
 
             # TODO: Compute `self.z` by drawing from normal distribution with
             # mean `z_mean` and standard deviation `z_sd` (utilizing the `epsilon` noise).
+            self.z = tf.add(tf.multiply(epsilon, z_sd), z_mean) 
 
             # Decoder
             def decoder(z):
@@ -54,23 +64,40 @@ class Network:
                 # Consider the output of the last hidden layer to be the logits of
                 # individual pixels. Reshape them into a correct shape for a grayscale
                 # image of size self.WIDTH x self.HEIGHT and return them.
+                dense_1 = tf.layers.dense(z, 500, activation=tf.nn.relu)
+                dense_2 = tf.layers.dense(dense_1, 500, activation=tf.nn.relu)
+                flatten_img = tf.layers.dense(dense_2, self.WIDTH * self.HEIGHT, activation=None)
+
+                return tf.reshape(flatten_img, [-1, self.HEIGHT, self.WIDTH, 1])
+
 
             generated_logits = decoder(self.z)
 
             # TODO: Define `self.generated_images` as generated_logits passed through a sigmoid.
+            self.generated_images = tf.sigmoid(generated_logits)
 
             # Loss and training
 
             # TODO: Define `reconstruction_loss` as a sigmoid cross entropy
             # loss of `self.images` and `generated_logits`.
+            reconstruction_loss = tf.losses.sigmoid_cross_entropy(self.images, generated_logits)
 
             # TODO: Define `latent_loss` as a mean of KL-divergences of normal distributions
             # N(z_mean, z_sd) and N(0, 1), utilizing `tf.distributions.kl_divergence`
             # and `tf.distributions.Normal`.
-
+            latent_loss = tf.reduce_mean(
+                tf.distributions.kl_divergence(
+                    tf.distributions.Normal(z_mean, z_sd), 
+                    tf.distributions.Normal(0.0, 1.0)
+                    )
+                )
+                
             # TODO: Define `self.loss` as a weighted combination of
             # reconstruction_loss (weight is the number of pixels in an image)
             # and latent_loss (weight is the dimensionality of the latent variable z).
+            self.loss = tf.add(
+                tf.multiply(reconstruction_loss, self.WIDTH * self.HEIGHT),
+                tf.multiply(latent_loss, self.z_dim))
 
             global_step = tf.train.create_global_step()
             self.training = tf.train.AdamOptimizer().minimize(self.loss, global_step=global_step, name="training")
