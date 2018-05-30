@@ -23,6 +23,11 @@ class Network:
             self.images = tf.placeholder(tf.float32, [None, self.HEIGHT, self.WIDTH, 1])
 
             # Encoder
+            # Encodes an input image into a vector from latent space that is supposed to 
+            # ..describe the image's abstract features (i.e. describe where in the
+            # ..the input images distribution the current image lies). To make sure
+            # ..the whole latent space produces believable inputs it doesn't convert
+            # ..the image to one vector but to a distribution of vectors.
             def encoder(image):
                 # TODO: Define an encoder as a sequence of:
                 # - flattening layer
@@ -43,6 +48,10 @@ class Network:
 
             z_mean, z_log_variance = encoder(self.images)
 
+            # Samples the generated latent vector distribution to obtain one
+            # ..specific individual. To enable the gradients to flow back to the encoder
+            # ..it uses a transformation of normal distribution.
+
             # TODO: Compute `z_sd` as a standard deviation from `z_log_variance`, by passing
             # `z_log_variance` / 2 to an exponential function.
             z_sd = tf.exp(z_log_variance / 2) # /2 is to get squared root of std-div
@@ -55,6 +64,8 @@ class Network:
             self.z = tf.add(tf.multiply(epsilon, z_sd), z_mean) 
 
             # Decoder
+            # Takes a latent vector and generates an output image using the trained 
+            # ..input images distribution. 
             def decoder(z):
                 # TODO: Define a decoder as a sequence of:
                 # - dense layer with 500 neurons and ReLU activation
@@ -72,6 +83,12 @@ class Network:
 
 
             generated_logits = decoder(self.z)
+
+            # Compute loss as a combination of reconstruction_loss and latent loss. The first one
+            # ..represents how well our encoder and decoder maintain the image. The second makes sure
+            # ..we the distributions suggested by encoder cover the whole (useful) latent space so that
+            # ..the decoder can create plausable images for any sample latent vector and not just
+            # ..for those that were generated from example images by encoder.
 
             # TODO: Define `self.generated_images` as generated_logits passed through a sigmoid.
             self.generated_images = tf.sigmoid(generated_logits)
@@ -91,7 +108,7 @@ class Network:
                     tf.distributions.Normal(0.0, 1.0)
                     )
                 )
-                
+
             # TODO: Define `self.loss` as a weighted combination of
             # reconstruction_loss (weight is the number of pixels in an image)
             # and latent_loss (weight is the dimensionality of the latent variable z).
