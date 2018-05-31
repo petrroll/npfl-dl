@@ -96,10 +96,10 @@ class Network:
                 tf.expand_dims(tf.cast(self.levels, tf.float32), -1), 
                 tf.cast(one_hot_prompts, tf.float32)
                 ], axis=1)
-            essay_info_processed = tf.layers.dense(essay_info, num_languages, activation=tf.nn.relu)
+            essay_info_processed = tf.layers.dense(essay_info, num_languages, activation=None)
+            essay_info_processed = self.with_bn(essay_info_processed, tf.nn.relu, self.is_training)
 
             # Prediction and logits
-
             logits = tf.layers.dense(essay_info_processed, num_languages, activation=None)
             self.predictions = tf.argmax(logits, axis=1)
 
@@ -107,9 +107,10 @@ class Network:
             global_step = tf.train.create_global_step()
             loss = tf.losses.sparse_softmax_cross_entropy(self.languages, logits, scope="loss")
 
-            update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-            with tf.control_dependencies(update_ops):
-                self.training = tf.train.AdamOptimizer().minimize(loss, global_step=global_step, name="training")
+            self.update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+            # See: https://github.com/tensorflow/tensorflow/issues/14357 -> evaluate update-ops explicitly through session.run
+            # with tf.control_dependencies(update_ops): 
+            self.training = tf.train.AdamOptimizer().minimize(loss, global_step=global_step, name="training")
 
             # Summaries
             self.current_accuracy, self.update_accuracy = tf.metrics.accuracy(self.languages, self.predictions)
@@ -137,7 +138,7 @@ class Network:
             sentence_lens, word_ids, charseq_ids, charseqs, charseq_lens, tags, levels, prompts, languages = \
                 train.next_batch(batch_size)
             self.session.run(self.reset_metrics)
-            self.session.run([self.training, self.summaries["train"]],
+            self.session.run([self.training, self.summaries["train"], self.update_ops],
                              {self.sentence_lens: sentence_lens,
                               self.charseqs: charseqs, self.charseq_lens: charseq_lens,
                               self.word_ids: word_ids, self.charseq_ids: charseq_ids,
