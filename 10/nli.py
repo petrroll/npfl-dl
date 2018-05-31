@@ -19,7 +19,7 @@ class Network:
 
         return last_layer
 
-    def construct(self, args, num_words, num_chars, num_languages, num_tags):
+    def construct(self, args, num_words, num_chars, num_languages, num_tags, num_prompts):
         with self.session.graph.as_default():
             # Inputs
             self.sentence_lens = tf.placeholder(tf.int32, [None], name="sentence_lens")
@@ -38,6 +38,7 @@ class Network:
             self.is_training = tf.placeholder_with_default(False, [], name="is_training")
 
             one_hot_tags = tf.one_hot(self.tags, num_tags)
+            one_hot_prompts = tf.one_hot(self.prompts, num_prompts)
 
             # Word embeddings
             with tf.variable_scope("word_embeds"):
@@ -86,13 +87,20 @@ class Network:
                 # Reduces current [batch, sentence_length, repre_dim] -> [batch, repre_dim]
                 sent_lengths = tf.tile(tf.expand_dims(tf.cast(self.sentence_lens, tf.float32), -1), [1, 2*args.conv_filters])
                 sent_summed_states = tf.reduce_sum(max4, axis=1)
-                sentence_repre = tf.divide(sent_summed_states, sent_lengths)
+                essay_repre = tf.divide(sent_summed_states, sent_lengths)
 
 
+            essay_info = tf.concat([
+                essay_repre, 
+                tf.expand_dims(tf.cast(self.sentence_lens, tf.float32), -1), 
+                tf.expand_dims(tf.cast(self.levels, tf.float32), -1), 
+                tf.cast(one_hot_prompts, tf.float32)
+                ], axis=1)
+            essay_info_processed = tf.layers.dense(essay_info, num_languages, activation=tf.nn.relu)
 
             # Prediction and logits
 
-            logits = tf.layers.dense(sentence_repre, num_languages, activation=None)
+            logits = tf.layers.dense(essay_info_processed, num_languages, activation=None)
             self.predictions = tf.argmax(logits, axis=1)
 
             # Training
@@ -202,7 +210,7 @@ if __name__ == "__main__":
 
     # Construct the network
     network = Network(threads=args.threads)
-    network.construct(args, len(train.vocabulary("words")), len(train.vocabulary("chars")), len(train.vocabulary("languages")), len(train.vocabulary("tags")))
+    network.construct(args, len(train.vocabulary("words")), len(train.vocabulary("chars")), len(train.vocabulary("languages")), len(train.vocabulary("tags")), len(train.vocabulary("prompts")))
 
     # Predict test data
     def predict_data(acc):
